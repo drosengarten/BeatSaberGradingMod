@@ -1,0 +1,21 @@
+.DS_Store
+
+# Build output
+/build/
+/build-host/
+/host/build/
+
+# Generated package artifacts
+/*.qmod
+/qmod_package/
+/mod.json
+
+# Local tool/download caches
+/extern/
+/tools/qpm/qpm
+/tools/qpm/ninja
+/qpm-macos-arm64.zip
+
+# Local machine paths
+/ndkpath.txt
+
