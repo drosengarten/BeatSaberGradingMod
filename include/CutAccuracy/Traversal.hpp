@@ -23,8 +23,9 @@ struct SaberPlaneSample {
 // Negative/zero means the plane intersects the box; positive means separated.
 double planeBoxClearance(const SaberPlaneSample& sample, const OrientedBox& box);
 
-// Finds the contiguous intersection interval nearest cutTime and linearly interpolates
-// entry/exit zero-crossings. Returns nullopt if both boundaries are not observed.
+// Finds the note traversal interval nearest cutTime. Dense samples use the
+// contiguous plane/box intersection interval; sparse samples can also estimate
+// traversal from a signed before-to-after crossing through the box.
 std::optional<double> traversalTimeSeconds(
     const std::vector<SaberPlaneSample>& samples,
     const OrientedBox& frozenNoteBox,

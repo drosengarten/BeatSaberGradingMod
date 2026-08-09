@@ -64,6 +64,16 @@ int main() {
     expectNear(smallerRatio(top), 0.5);
     expectNear(smallerRatio(bottom), 0.5);
     expectNear(miniNoteScoreFromSmallerRatio(smallerRatio(top)), 25.0);
+    auto topDepth = cutDepthSplitMiniNoteVolumes({0,1,0}, true, centeredVertical);
+    auto bottomDepth = cutDepthSplitMiniNoteVolumes({0,1,0}, false, centeredVertical);
+    expectNear(makeDepthSplitMiniNote({0,1,0}, true, false).volume(), 0.25);
+    expectNear(makeDepthSplitMiniNote({0,1,0}, true, true).volume(), 0.25);
+    expectNear(smallerRatio(topDepth.negativeDepth), 0.5);
+    expectNear(smallerRatio(topDepth.positiveDepth), 0.5);
+    expectNear(smallerRatio(bottomDepth.negativeDepth), 0.5);
+    expectNear(smallerRatio(bottomDepth.positiveDepth), 0.5);
+    expectNear(miniNoteScoreFromDepthSplitVolumes(topDepth), 25.0);
+    expectNear(miniNoteScoreFromDepthSplitVolumes(bottomDepth), 25.0);
 
     // Plane x=0.1 through a unit-width cube gives 60/40 in BOTH mini-notes.
     Plane xOffset = Plane::throughPoint({1,0,0}, {0.1,0,0});
@@ -71,9 +81,29 @@ int main() {
     bottom = cutMiniNoteVolumes({0,1,0}, false, xOffset);
     expectNear(smallerRatio(top), 0.4, 1e-5);
     expectNear(smallerRatio(bottom), 0.4, 1e-5);
-    expectNear(miniNoteScoreFromSmallerRatio(smallerRatio(top)), 20.0, 1e-5);
-    expectNear(miniNoteScoreFromSmallerRatio(smallerRatio(bottom)), 20.0, 1e-5);
+    expectNear(miniNoteScoreFromSmallerRatio(smallerRatio(top)), 24.375, 1e-5);
+    expectNear(miniNoteScoreFromSmallerRatio(smallerRatio(bottom)), 24.375, 1e-5);
+    topDepth = cutDepthSplitMiniNoteVolumes({0,1,0}, true, xOffset);
+    bottomDepth = cutDepthSplitMiniNoteVolumes({0,1,0}, false, xOffset);
+    expectNear(miniNoteScoreFromDepthSplitVolumes(topDepth), 24.375, 1e-5);
+    expectNear(miniNoteScoreFromDepthSplitVolumes(bottomDepth), 24.375, 1e-5);
 
+    // A saber plane angled through note depth can split the old upper/lower
+    // mini-notes 50/50 overall, while still drifting from front to back.
+    Plane depthAngled = Plane::throughPoint({1,0,1}, {0,0,0});
+    top = cutMiniNoteVolumes({0,1,0}, true, depthAngled);
+    bottom = cutMiniNoteVolumes({0,1,0}, false, depthAngled);
+    expectNear(smallerRatio(top), 0.5, 1e-6);
+    expectNear(smallerRatio(bottom), 0.5, 1e-6);
+    topDepth = cutDepthSplitMiniNoteVolumes({0,1,0}, true, depthAngled);
+    bottomDepth = cutDepthSplitMiniNoteVolumes({0,1,0}, false, depthAngled);
+    expectNear(smallerRatio(topDepth.negativeDepth), 0.25, 1e-6);
+    expectNear(smallerRatio(topDepth.positiveDepth), 0.25, 1e-6);
+    expectNear(smallerRatio(bottomDepth.negativeDepth), 0.25, 1e-6);
+    expectNear(smallerRatio(bottomDepth.positiveDepth), 0.25, 1e-6);
+    expectNear(miniNoteScoreFromSmallerRatio(smallerRatio(top)), 25.0, 1e-6);
+    expectNear(miniNoteScoreFromDepthSplitVolumes(topDepth), 20.25, 1e-6);
+    expectNear(miniNoteScoreFromDepthSplitVolumes(bottomDepth), 20.25, 1e-6);
 
     // Direction axis offset and diagonal mapping regression.
     auto rightAxis = splitAxisForCutDirection(CutDirection::Right);
@@ -104,13 +134,57 @@ int main() {
     RawMeasurements m{0.5, 0.4, 60, 30, 0.100};
     auto s = score(m);
     expectNear(s.firstMini, 25);
-    expectNear(s.secondMini, 20);
+    expectNear(s.secondMini, 24.375);
     expectNear(s.beforeSwing, 20);
-    expectNear(s.afterSwing, 10);
+    expectNear(s.afterSwing, 16.2);
     expectNear(s.speed, 10);
-    expectNear(s.total(), 85);
-    expectNear(speedScore(0.2), 5);
-    expectNear(speedScore(0.05), 10);
+    expectNear(s.total(), 95.575);
+    expectNear(speedScore(0.3), 8.1);
+    expectNear(speedScore(0.15), 10);
+
+    const auto easyWeights = scoreWeightsForDifficulty(DifficultyProfile::Easy);
+    const auto normalWeights = scoreWeightsForDifficulty(DifficultyProfile::Normal);
+    const auto hardWeights = scoreWeightsForDifficulty(DifficultyProfile::Hard);
+    const auto expertWeights = scoreWeightsForDifficulty(DifficultyProfile::Expert);
+    const auto expertPlusWeights = scoreWeightsForDifficulty(DifficultyProfile::ExpertPlus);
+    expectNear(easyWeights.swingFullAngleDeg, 50.0);
+    expectNear(normalWeights.swingFullAngleDeg, 60.0);
+    expectNear(hardWeights.swingFullAngleDeg, 70.0);
+    expectNear(expertWeights.swingFullAngleDeg, 80.0);
+    expectNear(expertPlusWeights.swingFullAngleDeg, 90.0);
+    expectNear(easyWeights.speedFullTimeSeconds, 0.200);
+    expectNear(normalWeights.speedFullTimeSeconds, 0.150);
+    expectNear(hardWeights.speedFullTimeSeconds, 0.125);
+    expectNear(expertWeights.speedFullTimeSeconds, 0.100);
+    expectNear(expertPlusWeights.speedFullTimeSeconds, 0.086);
+    require((difficultyProfileFromIndex(-4) == DifficultyProfile::Normal), "invalid difficulty index should fall back to Normal");
+    require((difficultyProfileFromIndex(4) == DifficultyProfile::ExpertPlus), "index 4 should be Expert+");
+    require((std::string(difficultyProfileName(DifficultyProfile::ExpertPlus)) == "Expert+"), "Expert+ profile name");
+
+    expectNear(qualityCurveValue(0.6, easyWeights), 0.93);
+    expectNear(qualityCurveValue(0.6, normalWeights), 0.90);
+    expectNear(qualityCurveValue(0.6, hardWeights), 0.84);
+    expectNear(qualityCurveValue(0.6, expertWeights), 0.79);
+    expectNear(qualityCurveValue(0.6, expertPlusWeights), 0.73);
+    expectNear(qualityCurveValue(0.9, easyWeights), 0.996);
+    expectNear(qualityCurveValue(0.9, normalWeights), 0.99);
+    expectNear(qualityCurveValue(0.9, hardWeights), 0.984);
+    expectNear(qualityCurveValue(0.9, expertWeights), 0.976);
+    expectNear(qualityCurveValue(0.9, expertPlusWeights), 0.968);
+
+    const double imperfectRatio = 0.25;
+    expectNear(miniNoteScoreFromSmallerRatio(imperfectRatio, easyWeights), 21.5);
+    expectNear(miniNoteScoreFromSmallerRatio(imperfectRatio, normalWeights), 20.25);
+    expectNear(miniNoteScoreFromSmallerRatio(imperfectRatio, hardWeights), 18.25);
+    expectNear(miniNoteScoreFromSmallerRatio(imperfectRatio, expertWeights), 16.5);
+    expectNear(miniNoteScoreFromSmallerRatio(imperfectRatio, expertPlusWeights), 14.5);
+    expectNear(speedScore(0.200, easyWeights), 10.0);
+    require((speedScore(0.250, easyWeights) > speedScore(0.250, normalWeights)), "easy speed should be easier than normal");
+    require((speedScore(0.250, normalWeights) > speedScore(0.250, hardWeights)), "hard speed should be harder than normal");
+    require((speedScore(0.250, hardWeights) > speedScore(0.250, expertWeights)), "expert speed should be harder than hard");
+    require((speedScore(0.250, expertWeights) > speedScore(0.250, expertPlusWeights)), "expert+ speed should be hardest");
+    expectNear(swingScore(50.0, easyWeights.beforeSwingMax, easyWeights), 20.0);
+    require((swingScore(50.0, expertPlusWeights.beforeSwingMax, expertPlusWeights) < 20.0), "expert+ swing should require more angle");
 
     // Score is bounded 0..100 under extreme/random inputs.
     std::uniform_real_distribution<double> ratioDist(-1.0, 2.0);
@@ -163,6 +237,26 @@ int main() {
     auto unknownAvg = unknownSpeedStats.averages();
     expectNear(unknownAvg.rawAccuracyPct, 100.0);
     require((unknownAvg.speedSamples == 0), "unknownAvg.speedSamples == 0");
+
+    auto fullParts = beatSaberCutScoreParts({25,25,20,20,10});
+    require((fullParts.centerDistance == 60), "fullParts.centerDistance == 60");
+    require((fullParts.before == 20), "fullParts.before == 20");
+    require((fullParts.after == 20), "fullParts.after == 20");
+    require((fullParts.fixed == 0), "fullParts.fixed == 0");
+    require((fullParts.centerDistance + fullParts.before + fullParts.after + fullParts.fixed == 100),
+            "fullParts total should be 100");
+
+    auto slowParts = beatSaberCutScoreParts({25,25,20,20,4.4});
+    require((slowParts.centerDistance == 54), "slowParts.centerDistance == 54");
+    require((slowParts.centerDistance + slowParts.before + slowParts.after + slowParts.fixed == 94),
+            "slowParts total should round to 94");
+
+    SaberStats roundedStats;
+    roundedStats.add({24.4,24.4,20,19,10}); // fractional total 97.8, Beat Saber cut score 98.
+    auto roundedAvg = roundedStats.averages();
+    expectNear(roundedAvg.rawAccuracyPct, 98.0);
+    expectNear(roundedAvg.levelAccuracyPct, 98.0);
+    expectNear(roundedAvg.firstMiniPct, 97.6);
 
     // Chain links are fixed 20/0 objects. They affect RAW/LEVEL denominators,
     // but they do not pollute the upper/lower/swing/speed component rows.
@@ -226,13 +320,37 @@ int main() {
     // Traversal test: plane normal X moves from x=-1 through a centered unit cube to +1.
     OrientedBox box{};
     std::vector<SaberPlaneSample> samples;
+    samples = {
+        {0.0, {-1,0,0}, {1,0,0}},
+        {0.2, {1,0,0}, {1,0,0}}
+    };
+    auto dt = traversalTimeSeconds(samples, box, 0.1);
+    require((dt.has_value()), "dt.has_value()");
+    expectNear(*dt, 0.1, 1e-6);
+
+    samples = {
+        {0.0, {-1,0,0}, {1,0,0}},
+        {0.4, {1,0,0}, {1,0,0}}
+    };
+    dt = traversalTimeSeconds(samples, box, 0.2);
+    require((dt.has_value()), "dt.has_value()");
+    expectNear(*dt, 0.2, 1e-6);
+
+    samples = {
+        {0.0, {-1.2,0,0}, {1,0,0}},
+        {0.2, {-0.9,0,0}, {1,0,0}}
+    };
+    dt = traversalTimeSeconds(samples, box, 0.1);
+    require((!dt.has_value()), "!dt.has_value()");
+
+    samples.clear();
     // x=-1 at t=0; x=+1 at t=.2 => intersection from x=-.5 to +.5 => .1 sec.
     for (int i=0;i<=20;++i) {
         double t = i * 0.01;
         double x = -1.0 + 10.0*t;
         samples.push_back({t, {x,0,0}, {1,0,0}});
     }
-    auto dt = traversalTimeSeconds(samples, box, 0.1);
+    dt = traversalTimeSeconds(samples, box, 0.1);
     require((dt.has_value()), "dt.has_value()");
     expectNear(*dt, 0.1, 1e-6);
     expectNear(speedScore(*dt), 10.0, 1e-6);
@@ -247,7 +365,7 @@ int main() {
     dt = traversalTimeSeconds(samples, box, 0.2);
     require((dt.has_value()), "dt.has_value()");
     expectNear(*dt, 0.2, 1e-6);
-    expectNear(speedScore(*dt), 5.0, 1e-6);
+    expectNear(speedScore(*dt), 9.643229166666666, 1e-6);
 
     std::cout << "All CutAccuracy core tests passed.\n";
     return 0;

@@ -16,11 +16,16 @@ class SaberSwingRatingCounter;
 
 namespace CutAccuracyQuest {
 
+struct DepthSplitMiniRatios {
+    double negativeDepth{0.0};
+    double positiveDepth{0.0};
+};
+
 struct PendingCut {
     CutAccuracy::SaberSide side{CutAccuracy::SaberSide::Left};
     CutAccuracy::CutDirection cutDirection{CutAccuracy::CutDirection::None};
-    double firstMiniRatio{0.0};
-    double secondMiniRatio{0.0};
+    DepthSplitMiniRatios firstMiniRatios{};
+    DepthSplitMiniRatios secondMiniRatios{};
     CutAccuracy::OrientedBox frozenBox{};
     double cutClockTime{0.0};
 };

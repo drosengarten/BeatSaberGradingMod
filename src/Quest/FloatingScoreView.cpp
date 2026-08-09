@@ -1,13 +1,16 @@
 #include "Quest/FloatingScoreView.hpp"
+#include "Quest/Settings.hpp"
 
 #include "CutAccuracy/Presentation.hpp"
 #include "GlobalNamespace/CutScoreBuffer.hpp"
 #include "GlobalNamespace/FlyingScoreEffect.hpp"
 #include "GlobalNamespace/IReadonlyCutScoreBuffer.hpp"
+#include "TMPro/TextAlignmentOptions.hpp"
 #include "TMPro/TextMeshPro.hpp"
 #include "UnityEngine/Color.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 
@@ -17,10 +20,12 @@ namespace {
 struct FloatingState {
     GlobalNamespace::FlyingScoreEffect* effect{nullptr};
     std::string customScore{};
+    std::string customText{};
     double accuracyPct{0.0};
 };
 
 std::unordered_map<GlobalNamespace::IReadonlyCutScoreBuffer*, FloatingState> states;
+std::size_t scoreTextVariantSeed = 0;
 
 void Apply(GlobalNamespace::IReadonlyCutScoreBuffer* buffer) {
     const auto it = states.find(buffer);
@@ -28,8 +33,15 @@ void Apply(GlobalNamespace::IReadonlyCutScoreBuffer* buffer) {
     auto& state = it->second;
     if (!state.effect || state.customScore.empty() || !state.effect->_text) return;
     const auto* hex = CutAccuracy::accuracyBandHex(state.accuracyPct);
+    std::string text = state.customScore;
+    if (ShouldShowFlyingScoreText() && !state.customText.empty()) {
+        text += "\n<size=60%>";
+        text += state.customText;
+        text += "</size>";
+    }
     state.effect->_text->set_richText(true);
-    state.effect->_text->set_text("<color=" + std::string(hex) + ">" + state.customScore + "</color>");
+    state.effect->_text->set_alignment(TMPro::TextAlignmentOptions::Center);
+    state.effect->_text->set_text("<color=" + std::string(hex) + ">" + text + "</color>");
     const auto rgb = CutAccuracy::accuracyBandRgb(state.accuracyPct);
     state.effect->_text->set_color({rgb.r, rgb.g, rgb.b, 1.0f});
 }
@@ -57,6 +69,7 @@ void PresentCustomFlyingScore(
     auto* readOnly = buffer->i___GlobalNamespace__IReadonlyCutScoreBuffer();
     states[readOnly].customScore = CutAccuracy::formatPerNoteScore(components);
     states[readOnly].accuracyPct = std::clamp(components.total(), 0.0, 100.0);
+    states[readOnly].customText = FlyingScoreTextForAccuracy(states[readOnly].accuracyPct, scoreTextVariantSeed++);
     Apply(readOnly);
 }
 
@@ -68,6 +81,7 @@ void PresentFixedFlyingScore(
     auto* readOnly = buffer->i___GlobalNamespace__IReadonlyCutScoreBuffer();
     states[readOnly].customScore = CutAccuracy::formatFixedScore(score, maxScore);
     states[readOnly].accuracyPct = maxScore > 0.0 ? std::clamp(score / maxScore * 100.0, 0.0, 100.0) : 0.0;
+    states[readOnly].customText = FlyingScoreTextForAccuracy(states[readOnly].accuracyPct, scoreTextVariantSeed++);
     Apply(readOnly);
 }
 
@@ -82,6 +96,7 @@ void ReapplyCustomFlyingScore(GlobalNamespace::FlyingScoreEffect* effect) {
 
 void ClearFlyingScores() {
     states.clear();
+    scoreTextVariantSeed = 0;
 }
 
 } // namespace CutAccuracyQuest

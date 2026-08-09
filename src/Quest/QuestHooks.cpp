@@ -3,6 +3,8 @@
 #include "Quest/UnityAdapters.hpp"
 #include "Quest/HudModel.hpp"
 #include "Quest/FloatingScoreView.hpp"
+#include "Quest/QountersHud.hpp"
+#include "Quest/Settings.hpp"
 
 #include "CutAccuracy/Geometry.hpp"
 #include "CutAccuracy/Scoring.hpp"
@@ -44,6 +46,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace GlobalNamespace;
@@ -53,6 +56,7 @@ namespace {
 
 System::Action_1<ScoringElement*>* scoreFinishedDelegate = nullptr;
 ScoreController* scoreControllerWithDelegate = nullptr;
+std::unordered_map<ScoringElement*, CutAccuracy::BeatSaberCutScoreParts> pendingScoreOverrides;
 
 UnityEngine::Vector3 Add(UnityEngine::Vector3 lhs, UnityEngine::Vector3 rhs) {
     return {lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
@@ -72,15 +76,14 @@ void PatchScoreDefinition(ScoreModel_NoteScoreDefinition* def, const CutAccuracy
     if (rule.kind == CutAccuracy::ScoreObjectKind::FullNote) {
         // Rewrite the built-in score definition so ScoreModel's max-score graph
         // uses CutAccuracy's full-note denominator of 100 instead of vanilla
-        // 115. The exact component split here is only for Beat Saber's max/score
-        // model; the actual earned score is still overwritten from CutAccuracy's
-        // own mini-note/swing/speed calculation after each scoring event.
-        def->___maxCenterDistanceCutScore = 50;
+        // 115. The 60-point center bucket holds CutAccuracy's two mini-note
+        // scores plus speed; before/after swing keep their 20-point buckets.
+        def->___maxCenterDistanceCutScore = 60;
         def->___minBeforeCutScore = 0;
         def->___maxBeforeCutScore = 20;
         def->___minAfterCutScore = 0;
         def->___maxAfterCutScore = 20;
-        def->___fixedCutScore = 10;
+        def->___fixedCutScore = 0;
         return;
     }
 
@@ -200,6 +203,39 @@ CutAccuracy::Vec3 ResolveSplitAxisLocal(
     return {0, 1, 0};
 }
 
+void ApplyScoreParts(CutScoreBuffer* buffer, const CutAccuracy::BeatSaberCutScoreParts& parts) {
+    if (!buffer) return;
+    buffer->_centerDistanceCutScore = parts.centerDistance;
+    buffer->_beforeCutScore = parts.before;
+    buffer->_afterCutScore = parts.after;
+}
+
+void ApplyPendingScoreOverride(ScoringElement* element) {
+    if (!element) return;
+
+    auto it = pendingScoreOverrides.find(element);
+    if (it == pendingScoreOverrides.end()) return;
+
+    if (auto good = il2cpp_utils::try_cast<GoodCutScoringElement>(element)) {
+        ApplyScoreParts(good.value()->_cutScoreBuffer, it->second);
+    }
+}
+
+DepthSplitMiniRatios ToDepthSplitRatios(const CutAccuracy::DepthSplitMiniNoteVolumes& volumes) {
+    return {
+        CutAccuracy::smallerRatio(volumes.negativeDepth),
+        CutAccuracy::smallerRatio(volumes.positiveDepth)
+    };
+}
+
+double MiniScore(const DepthSplitMiniRatios& ratios, const CutAccuracy::ScoreWeights& weights) {
+    return CutAccuracy::miniNoteScoreFromDepthSplitRatios(
+        ratios.negativeDepth,
+        ratios.positiveDepth,
+        weights
+    );
+}
+
 std::vector<CutAccuracy::SaberPlaneSample> MovementSamples(SaberMovementData* movement) {
     std::vector<CutAccuracy::SaberPlaneSample> result;
     if (!movement) return result;
@@ -314,31 +350,37 @@ void CommitGood(GoodCutScoringElement* good) {
         }
     }
 
-    const CutAccuracy::RawMeasurements raw{
-        pending.firstMiniRatio,
-        pending.secondMiniRatio,
-        beforeDeg,
-        afterDeg,
-        traversal.value_or(0.0)
+    const auto weights = CurrentScoreWeights();
+    CutAccuracy::NoteComponents components{
+        MiniScore(pending.firstMiniRatios, weights),
+        MiniScore(pending.secondMiniRatios, weights),
+        CutAccuracy::swingScore(beforeDeg, weights.beforeSwingMax, weights),
+        CutAccuracy::swingScore(afterDeg, weights.afterSwingMax, weights),
+        traversal ? CutAccuracy::speedScore(*traversal, weights) : weights.speedMax,
+        traversal.has_value()
     };
-    auto components = traversal ? CutAccuracy::score(raw) : CutAccuracy::scoreWithUnknownSpeed(raw);
     if (!traversal) ++traversalMissingCount;
 
-    sessionStats.forSide(pending.side).addWeighted(components, rule.maxScore, ActualMultiplier(good), MaxMultiplier(good));
+    const auto scoreParts = CutAccuracy::beatSaberCutScoreParts(components, weights);
+    pendingScoreOverrides[good] = scoreParts;
+    ApplyScoreParts(buffer, scoreParts);
+
+    sessionStats.forSide(pending.side).addWeighted(components, rule.maxScore, ActualMultiplier(good), MaxMultiplier(good), weights);
     SyncBuiltinScoreOverride();
     PresentCustomFlyingScore(buffer, components);
 
     const auto hud = CutAccuracy::buildHudPresentation(sessionStats);
+    const auto averages = sessionStats.averages(weights);
     if (traversal) {
         CutAccuracyLogger.info(
             "{} {:.1f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{} | mini {:.1f}+{:.1f} swing {:.1f}+{:.1f} speed {:.1f} | traversal {:.1f}ms",
-            rule.name, components.total(), rule.maxScore, sessionStats.averages().rawAccuracyPct, sessionStats.averages().levelAccuracyPct,
+            rule.name, components.total(), rule.maxScore, averages.rawAccuracyPct, averages.levelAccuracyPct,
             ActualMultiplier(good), MaxMultiplier(good), components.firstMini, components.secondMini,
             components.beforeSwing, components.afterSwing, components.speed, *traversal * 1000.0);
     } else {
         CutAccuracyLogger.warn(
             "{} {:.1f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{} | traversal -- (missing count {}) | {}",
-            rule.name, components.total(), rule.maxScore, sessionStats.averages().rawAccuracyPct, sessionStats.averages().levelAccuracyPct,
+            rule.name, components.total(), rule.maxScore, averages.rawAccuracyPct, averages.levelAccuracyPct,
             ActualMultiplier(good), MaxMultiplier(good), traversalMissingCount, hud.heading);
     }
 
@@ -405,14 +447,14 @@ MAKE_HOOK_MATCH(CA_NoteWasCut,
             const auto splitAxis = ResolveSplitAxisLocal(noteController->noteData, t, noteCutInfo.heldRef);
 
             if (CutAccuracy::lengthSq(splitAxis) > 1e-8) {
-                const auto first = CutAccuracy::cutMiniNoteVolumes(splitAxis, true, localPlane);
-                const auto second = CutAccuracy::cutMiniNoteVolumes(splitAxis, false, localPlane);
+                const auto first = CutAccuracy::cutDepthSplitMiniNoteVolumes(splitAxis, true, localPlane);
+                const auto second = CutAccuracy::cutDepthSplitMiniNoteVolumes(splitAxis, false, localPlane);
 
                 pendingCuts[noteController->noteData] = {
                     ExpectedSide(noteController->noteData),
                     coreDirection,
-                    CutAccuracy::smallerRatio(first),
-                    CutAccuracy::smallerRatio(second),
+                    ToDepthSplitRatios(first),
+                    ToDepthSplitRatios(second),
                     FreezeBox(t),
                     static_cast<double>(UnityEngine::Time::get_time())
                 };
@@ -431,6 +473,7 @@ MAKE_HOOK_MATCH(CA_ComputeSwingRating,
 
     const float vanilla = CA_ComputeSwingRating(self, overrideSegmentAngle, overrideValue);
     if (!self || self->_validCount <= 0 || self->_data.size() == 0) return vanilla;
+    const double fullSwingDegrees = CurrentScoreWeights().swingFullAngleDeg;
 
     const auto data = self->_data;
     const int length = data.size();
@@ -442,7 +485,7 @@ MAKE_HOOK_MATCH(CA_ComputeSwingRating,
     UnityEngine::Vector3 previousNormal = data[index].segmentNormal;
     double degrees = overrideSegmentAngle ? overrideValue : data[index].segmentAngle;
 
-    for (int i = 2; startTime - time < 0.4f && i < self->_validCount && degrees < 60.0; ++i) {
+    for (int i = 2; startTime - time < 0.4f && i < self->_validCount && degrees < fullSwingDegrees; ++i) {
         --index;
         if (index < 0) index += length;
         const auto& e = data[index];
@@ -453,7 +496,7 @@ MAKE_HOOK_MATCH(CA_ComputeSwingRating,
         time = e.time;
     }
 
-    preSwingDegrees[self] = std::min(60.0, degrees);
+    preSwingDegrees[self] = std::min(fullSwingDegrees, degrees);
     return vanilla;
 }
 
@@ -468,20 +511,21 @@ MAKE_HOOK_MATCH(CA_ProcessNewSwingData,
     CA_ProcessNewSwingData(self, newData, prevData, prevDataAreValid);
 
     double& degrees = postSwingDegrees[self];
-    if (degrees >= 60.0 || !prevDataAreValid) return;
+    const double fullSwingDegrees = CurrentScoreWeights().swingFullAngleDeg;
+    if (degrees >= fullSwingDegrees || !prevDataAreValid) return;
 
     if (!wasPastPlane && self->_notePlaneWasCut) {
         const float partial = UnityEngine::Vector3::Angle(
             Subtract(self->_cutTopPos, self->_cutBottomPos),
             Subtract(self->_afterCutTopPos, self->_afterCutBottomPos));
-        degrees = std::min(60.0, degrees + static_cast<double>(partial));
+        degrees = std::min(fullSwingDegrees, degrees + static_cast<double>(partial));
         return;
     }
 
     if (self->_notePlaneWasCut && self->_rateAfterCut) {
         const float normalDiff = UnityEngine::Vector3::Angle(newData.segmentNormal, self->_cutPlaneNormal);
         if (normalDiff <= 90.0f) {
-            degrees = std::min(60.0, degrees + static_cast<double>(newData.segmentAngle));
+            degrees = std::min(fullSwingDegrees, degrees + static_cast<double>(newData.segmentAngle));
         }
     }
 }
@@ -489,7 +533,9 @@ MAKE_HOOK_MATCH(CA_ProcessNewSwingData,
 MAKE_HOOK_MATCH(CA_ScoreControllerStart, &ScoreController::Start, void, ScoreController* self) {
     ClearHud();
     ClearFlyingScores();
+    pendingScoreOverrides.clear();
     ResetSession();
+    CutAccuracyLogger.info("CutAccuracy session difficulty {}", CurrentDifficultyName());
     CA_ScoreControllerStart(self);
 
     // Defensive lifecycle handling: ScoreController normally starts once per play
@@ -513,6 +559,7 @@ MAKE_HOOK_MATCH(CA_ScoreControllerStart, &ScoreController::Start, void, ScoreCon
 MAKE_HOOK_MATCH(CA_ScoreControllerOnDestroy, &ScoreController::OnDestroy, void, ScoreController* self) {
     ClearHud();
     ClearFlyingScores();
+    pendingScoreOverrides.clear();
     if (self && scoreFinishedDelegate && self == scoreControllerWithDelegate) {
         self->remove_scoringForNoteFinishedEvent(scoreFinishedDelegate);
         scoreFinishedDelegate = nullptr;
@@ -521,11 +568,24 @@ MAKE_HOOK_MATCH(CA_ScoreControllerOnDestroy, &ScoreController::OnDestroy, void, 
     CA_ScoreControllerOnDestroy(self);
 }
 
+MAKE_HOOK_MATCH(CA_ScoreControllerDespawnScoringElement,
+    &ScoreController::DespawnScoringElement,
+    void, ScoreController* self, ScoringElement* scoringElement) {
+
+    ApplyPendingScoreOverride(scoringElement);
+    CA_ScoreControllerDespawnScoringElement(self, scoringElement);
+    if (scoringElement) pendingScoreOverrides.erase(scoringElement);
+}
+
 
 MAKE_HOOK_MATCH(CA_ComboUIControllerStart, &ComboUIController::Start, void, ComboUIController* self) {
     CA_ComboUIControllerStart(self);
     try {
         ClearHud();
+        if (ShouldUseQountersHud()) {
+            CutAccuracyLogger.info("CutAccuracy standalone HUD skipped because Qounters++ is enabled");
+            return;
+        }
         InstallHud(self);
     } catch (const std::exception& e) {
         CutAccuracyLogger.warn("CutAccuracy HUD install failed: {}", e.what());
@@ -582,13 +642,14 @@ void InstallHooks() {
     installed += TryInstallHook<Hook_CA_ProcessNewSwingData>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_ScoreControllerStart>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_ScoreControllerOnDestroy>() ? 1 : 0;
+    installed += TryInstallHook<Hook_CA_ScoreControllerDespawnScoringElement>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_ComboUIControllerStart>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_FlyingScoreInitAndPresent>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_FlyingScoreDidFinish>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_FlyingScoreRefreshScore>() ? 1 : 0;
     installed += TryInstallHook<Hook_CA_FlyingScoreUpdate>() ? 1 : 0;
 
-    CutAccuracyLogger.info("CutAccuracy installed {}/11 hooks", installed);
+    CutAccuracyLogger.info("CutAccuracy installed {}/12 hooks", installed);
 }
 
 } // namespace CutAccuracyQuest

@@ -150,6 +150,12 @@ ConvexPolyhedron makeMiniNote(const Vec3& directionAxis, bool positiveHalf) {
     return ConvexPolyhedron::unitCube().clipped(split);
 }
 
+ConvexPolyhedron makeDepthSplitMiniNote(const Vec3& directionAxis, bool positiveHalf, bool positiveDepthHalf) {
+    Plane depthSplit = Plane::throughPoint({0,0,1}, {0,0,0});
+    if (!positiveDepthHalf) depthSplit = depthSplit.flipped();
+    return makeMiniNote(directionAxis, positiveHalf).clipped(depthSplit);
+}
+
 Vec3 splitAxisForCutDirection(CutDirection direction) {
     switch (direction) {
         case CutDirection::Up:
@@ -202,6 +208,17 @@ MiniNoteVolumes cutMiniNoteVolumes(
     const Plane& saberCutPlaneLocal
 ) {
     return cutPolyhedronVolumes(makeMiniNote(directionAxis, positiveHalf), saberCutPlaneLocal);
+}
+
+DepthSplitMiniNoteVolumes cutDepthSplitMiniNoteVolumes(
+    const Vec3& directionAxis,
+    bool positiveHalf,
+    const Plane& saberCutPlaneLocal
+) {
+    return {
+        cutPolyhedronVolumes(makeDepthSplitMiniNote(directionAxis, positiveHalf, false), saberCutPlaneLocal),
+        cutPolyhedronVolumes(makeDepthSplitMiniNote(directionAxis, positiveHalf, true), saberCutPlaneLocal)
+    };
 }
 
 } // namespace CutAccuracy
