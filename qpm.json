@@ -13,6 +13,7 @@
     }
   },
   "workspace": {
+    "scripts": {},
     "ndk": "^27.3.13750724",
     "qmodIncludeDirs": [
       "./build",
@@ -54,6 +55,26 @@
       "id": "bsml",
       "versionRange": "^0.4.55",
       "additionalData": {}
+    },
+    {
+      "id": "config-utils",
+      "versionRange": "^2.0.3",
+      "additionalData": {
+        "headersOnly": true,
+        "private": true
+      }
+    },
+    {
+      "id": "qounters++",
+      "versionRange": "^1.1.5",
+      "additionalData": {
+        "soLink": "https://github.com/Metalit/Qounters/releases/download/v1.1.5/libqountersplusplus.so",
+        "debugSoLink": "https://github.com/Metalit/Qounters/releases/download/v1.1.5/debug_libqountersplusplus.so",
+        "overrideSoName": "libqountersplusplus.so",
+        "modLink": "https://github.com/Metalit/Qounters/releases/download/v1.1.5/Qounters%2B%2B.qmod",
+        "branchName": "version/v1_1_5",
+        "cmake": true
+      }
     }
   ]
 }

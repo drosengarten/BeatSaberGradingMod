@@ -18,6 +18,11 @@ double defaultFullNoteMax(const ScoreWeights& w) {
     return 2*w.miniNoteMax + w.beforeSwingMax + w.afterSwingMax + w.speedMax;
 }
 
+double beatSaberIntegerScore(const NoteComponents& c, const ScoreWeights& w) {
+    const auto parts = beatSaberCutScoreParts(c, w);
+    return static_cast<double>(parts.centerDistance + parts.before + parts.after + parts.fixed);
+}
+
 } // namespace
 
 void SaberStats::reset() {
@@ -38,6 +43,9 @@ void SaberStats::add(const NoteComponents& c, int actualMultiplier, int maxMulti
 void SaberStats::addWeighted(const NoteComponents& c, double objectMaxScore, int actualMultiplier, int maxMultiplier, const ScoreWeights& w) {
     if (objectMaxScore <= 0.0) return;
 
+    const double componentMax = defaultFullNoteMax(w);
+    if (componentMax <= 0.0) return;
+
     ++notes_;
     ++componentSamples_;
     sums_.firstMini += c.firstMini;
@@ -49,8 +57,7 @@ void SaberStats::addWeighted(const NoteComponents& c, double objectMaxScore, int
         sums_.speed += c.speed;
     }
 
-    const double componentMax = defaultFullNoteMax(w);
-    const double boundedComponentScore = std::clamp(c.total(), 0.0, componentMax);
+    const double boundedComponentScore = std::clamp(beatSaberIntegerScore(c, w), 0.0, componentMax);
     const double objectScore = objectMaxScore * (boundedComponentScore / componentMax);
     const int actual = safeMultiplier(actualMultiplier);
     const int maxPossible = std::max(1, safeMultiplier(maxMultiplier));

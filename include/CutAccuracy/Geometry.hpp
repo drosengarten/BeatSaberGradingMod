@@ -22,6 +22,11 @@ struct MiniNoteVolumes {
     double total{0.0};
 };
 
+struct DepthSplitMiniNoteVolumes {
+    MiniNoteVolumes negativeDepth;
+    MiniNoteVolumes positiveDepth;
+};
+
 enum class CutDirection {
     Up,
     Down,
@@ -45,6 +50,7 @@ bool hasDirectionalSplit(CutDirection direction);
 // The note is split through its center by a plane perpendicular to directionAxis.
 // directionAxis is expressed in note-local coordinates.
 ConvexPolyhedron makeMiniNote(const Vec3& directionAxis, bool positiveHalf);
+ConvexPolyhedron makeDepthSplitMiniNote(const Vec3& directionAxis, bool positiveHalf, bool positiveDepthHalf);
 
 MiniNoteVolumes cutPolyhedronVolumes(
     const ConvexPolyhedron& polyhedron,
@@ -52,6 +58,12 @@ MiniNoteVolumes cutPolyhedronVolumes(
 );
 
 MiniNoteVolumes cutMiniNoteVolumes(
+    const Vec3& directionAxis,
+    bool positiveHalf,
+    const Plane& saberCutPlaneLocal
+);
+
+DepthSplitMiniNoteVolumes cutDepthSplitMiniNoteVolumes(
     const Vec3& directionAxis,
     bool positiveHalf,
     const Plane& saberCutPlaneLocal
