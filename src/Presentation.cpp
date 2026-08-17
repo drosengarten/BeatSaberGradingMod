@@ -8,13 +8,8 @@ namespace CutAccuracy {
 namespace {
 
 void metric(char* out, std::size_t outSize, std::size_t samples, double value) {
-    if (samples == 0) std::snprintf(out, outSize, "  -- ");
+    if (samples == 0) std::snprintf(out, outSize, "   - ");
     else std::snprintf(out, outSize, "<color=%s>%5.1f</color>", accuracyBandHex(value), value);
-}
-
-void speedMetric(char* out, std::size_t outSize, const SaberAverages& avg) {
-    if (avg.speedSamples == 0) std::snprintf(out, outSize, "  -- ");
-    else std::snprintf(out, outSize, "<color=%s>%5.1f</color>", accuracyBandHex(avg.speedPct), avg.speedPct);
 }
 
 std::string coloredPct(double value) {
@@ -30,7 +25,7 @@ HudPresentation buildHudPresentation(const SessionStats& stats) {
 
     char heading[128];
     if (summary.notes == 0) {
-        std::snprintf(heading, sizeof(heading), "LEVEL ACC  --\n RAW ACC   --");
+        std::snprintf(heading, sizeof(heading), "LEVEL ACC   -\n RAW ACC    -");
     } else {
         const auto level = coloredPct(summary.levelAccuracyPct);
         const auto raw = coloredPct(summary.rawAccuracyPct);
@@ -38,7 +33,7 @@ HudPresentation buildHudPresentation(const SessionStats& stats) {
                       level.c_str(), raw.c_str());
     }
 
-    char lu[64], ru[64], ll[64], rl[64], lb[64], rb[64], la[64], ra[64], ls[64], rs[64];
+    char lu[64], ru[64], ll[64], rl[64], lb[64], rb[64], la[64], ra[64];
     metric(lu, sizeof(lu), summary.left.componentSamples, summary.left.firstMiniPct);
     metric(ru, sizeof(ru), summary.right.componentSamples, summary.right.firstMiniPct);
     metric(ll, sizeof(ll), summary.left.componentSamples, summary.left.secondMiniPct);
@@ -47,18 +42,15 @@ HudPresentation buildHudPresentation(const SessionStats& stats) {
     metric(rb, sizeof(rb), summary.right.componentSamples, summary.right.beforeSwingPct);
     metric(la, sizeof(la), summary.left.componentSamples, summary.left.afterSwingPct);
     metric(ra, sizeof(ra), summary.right.componentSamples, summary.right.afterSwingPct);
-    speedMetric(ls, sizeof(ls), summary.left);
-    speedMetric(rs, sizeof(rs), summary.right);
 
-    char table[512];
+    char table[640];
     std::snprintf(table, sizeof(table),
         "          L       R\n"
         "Upper   %s   %s\n"
         "Lower   %s   %s\n"
         "Before  %s   %s\n"
-        "After   %s   %s\n"
-        "Speed   %s   %s",
-        lu, ru, ll, rl, lb, rb, la, ra, ls, rs);
+        "After   %s   %s",
+        lu, ru, ll, rl, lb, rb, la, ra);
 
     return {summary.levelAccuracyPct, heading, table};
 }

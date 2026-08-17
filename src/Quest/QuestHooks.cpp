@@ -8,7 +8,6 @@
 
 #include "CutAccuracy/Geometry.hpp"
 #include "CutAccuracy/Scoring.hpp"
-#include "CutAccuracy/Traversal.hpp"
 
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-utils.hpp"
@@ -34,7 +33,6 @@
 #include "GlobalNamespace/CutScoreBuffer.hpp"
 
 #include "System/Action_1.hpp"
-#include "UnityEngine/Time.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "UnityEngine/Color.hpp"
 
@@ -44,10 +42,8 @@
 #include <cmath>
 #include <exception>
 #include <functional>
-#include <optional>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 using namespace GlobalNamespace;
 
@@ -58,31 +54,23 @@ System::Action_1<ScoringElement*>* scoreFinishedDelegate = nullptr;
 ScoreController* scoreControllerWithDelegate = nullptr;
 std::unordered_map<ScoringElement*, CutAccuracy::BeatSaberCutScoreParts> pendingScoreOverrides;
 
-UnityEngine::Vector3 Add(UnityEngine::Vector3 lhs, UnityEngine::Vector3 rhs) {
-    return {lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z};
-}
-
 UnityEngine::Vector3 Subtract(UnityEngine::Vector3 lhs, UnityEngine::Vector3 rhs) {
     return {lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
-}
-
-UnityEngine::Vector3 Scale(UnityEngine::Vector3 value, float scalar) {
-    return {value.x * scalar, value.y * scalar, value.z * scalar};
 }
 
 void PatchScoreDefinition(ScoreModel_NoteScoreDefinition* def, const CutAccuracy::ScoreObjectRule& rule) {
     if (!def) return;
 
     if (rule.kind == CutAccuracy::ScoreObjectKind::FullNote) {
-        // Rewrite the built-in score definition so ScoreModel's max-score graph
-        // uses CutAccuracy's full-note denominator of 100 instead of vanilla
-        // 115. The 60-point center bucket holds CutAccuracy's two mini-note
-        // scores plus speed; before/after swing keep their 20-point buckets.
-        def->___maxCenterDistanceCutScore = 60;
+        // Preserve Beat Saber's standard 70/30 swing buckets so its native
+        // SaberSwingRatingCounter continues to collect before/after ratings.
+        // CutAccuracy later overwrites the two bucket values with the final
+        // blended /100 result, so note accuracy can still own any slider share.
+        def->___maxCenterDistanceCutScore = 0;
         def->___minBeforeCutScore = 0;
-        def->___maxBeforeCutScore = 20;
+        def->___maxBeforeCutScore = 70;
         def->___minAfterCutScore = 0;
-        def->___maxAfterCutScore = 20;
+        def->___maxAfterCutScore = 30;
         def->___fixedCutScore = 0;
         return;
     }
@@ -236,32 +224,6 @@ double MiniScore(const DepthSplitMiniRatios& ratios, const CutAccuracy::ScoreWei
     );
 }
 
-std::vector<CutAccuracy::SaberPlaneSample> MovementSamples(SaberMovementData* movement) {
-    std::vector<CutAccuracy::SaberPlaneSample> result;
-    if (!movement) return result;
-
-    const auto data = movement->_data;
-    const int length = data.size();
-    const int valid = std::min(movement->_validCount, length);
-    if (length <= 0 || valid <= 0) return result;
-
-    int index = movement->_nextAddIndex - valid;
-    while (index < 0) index += length;
-
-    result.reserve(valid);
-    for (int i = 0; i < valid; ++i) {
-        const auto& e = data[index];
-        const auto midpoint = Scale(Add(e.topPos, e.bottomPos), 0.5f);
-        result.push_back({
-            static_cast<double>(e.time),
-            ToCore(midpoint),
-            ToCore(e.segmentNormal)
-        });
-        index = (index + 1) % length;
-    }
-    return result;
-}
-
 void SyncBuiltinScoreOverride() {
     if (!scoreControllerWithDelegate) return;
 
@@ -336,30 +298,35 @@ void CommitGood(GoodCutScoringElement* good) {
     auto* counter = buffer ? buffer->_saberSwingRatingCounter : nullptr;
     auto* movement = counter ? (SaberMovementData*)counter->_saberMovementData : nullptr;
 
-    const double beforeDeg = movement && preSwingDegrees.contains(movement)
-        ? preSwingDegrees[movement] : 0.0;
-    const double afterDeg = counter && postSwingDegrees.contains(counter)
-        ? postSwingDegrees[counter] : 0.0;
+    const auto weights = CurrentScoreWeights();
 
-    std::optional<double> traversal;
-    if (movement) {
-        const auto samples = MovementSamples(movement);
-        if (auto measured = CutAccuracy::traversalTimeSeconds(
-                samples, pending.frozenBox, pending.cutClockTime)) {
-            traversal = *measured;
-        }
+    // Use Beat Saber's completed native swing ratings as the source of truth.
+    // In 1.40.8 these are normalized against the standard 100-degree before
+    // and 60-degree after targets. The old pointer-keyed hook caches remain as
+    // a defensive fallback for unusual lifecycle/order cases.
+    double beforeDeg = 0.0;
+    double afterDeg = 0.0;
+    if (buffer && counter) {
+        const double beforeRating = std::clamp(static_cast<double>(buffer->get_beforeCutSwingRating()), 0.0, 1.0);
+        const double afterRating = std::clamp(static_cast<double>(buffer->get_afterCutSwingRating()), 0.0, 1.0);
+        beforeDeg = beforeRating * weights.beforeSwingFullAngleDeg;
+        afterDeg = afterRating * weights.afterSwingFullAngleDeg;
+    }
+    if (beforeDeg <= 1e-6 && movement && preSwingDegrees.contains(movement)) {
+        beforeDeg = preSwingDegrees[movement];
+    }
+    if (afterDeg <= 1e-6 && counter && postSwingDegrees.contains(counter)) {
+        afterDeg = postSwingDegrees[counter];
     }
 
-    const auto weights = CurrentScoreWeights();
+    const int accuracyWeight = CurrentAccuracyWeightPercent();
     CutAccuracy::NoteComponents components{
         MiniScore(pending.firstMiniRatios, weights),
         MiniScore(pending.secondMiniRatios, weights),
-        CutAccuracy::swingScore(beforeDeg, weights.beforeSwingMax, weights),
-        CutAccuracy::swingScore(afterDeg, weights.afterSwingMax, weights),
-        traversal ? CutAccuracy::speedScore(*traversal, weights) : weights.speedMax,
-        traversal.has_value()
+        CutAccuracy::beforeSwingScore(beforeDeg, weights),
+        CutAccuracy::afterSwingScore(afterDeg, weights),
+        accuracyWeight
     };
-    if (!traversal) ++traversalMissingCount;
 
     const auto scoreParts = CutAccuracy::beatSaberCutScoreParts(components, weights);
     pendingScoreOverrides[good] = scoreParts;
@@ -369,20 +336,13 @@ void CommitGood(GoodCutScoringElement* good) {
     SyncBuiltinScoreOverride();
     PresentCustomFlyingScore(buffer, components);
 
-    const auto hud = CutAccuracy::buildHudPresentation(sessionStats);
     const auto averages = sessionStats.averages(weights);
-    if (traversal) {
-        CutAccuracyLogger.info(
-            "{} {:.1f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{} | mini {:.1f}+{:.1f} swing {:.1f}+{:.1f} speed {:.1f} | traversal {:.1f}ms",
-            rule.name, components.total(), rule.maxScore, averages.rawAccuracyPct, averages.levelAccuracyPct,
-            ActualMultiplier(good), MaxMultiplier(good), components.firstMini, components.secondMini,
-            components.beforeSwing, components.afterSwing, components.speed, *traversal * 1000.0);
-    } else {
-        CutAccuracyLogger.warn(
-            "{} {:.1f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{} | traversal -- (missing count {}) | {}",
-            rule.name, components.total(), rule.maxScore, averages.rawAccuracyPct, averages.levelAccuracyPct,
-            ActualMultiplier(good), MaxMultiplier(good), traversalMissingCount, hud.heading);
-    }
+    CutAccuracyLogger.info(
+        "{} {:.1f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{} | upper {:.1f} lower {:.1f} | before {:.1f}/70 after {:.1f}/30 | swing {:.1f} accuracy {:.1f} | weights swing {}% accuracy {}%",
+        rule.name, components.total(), rule.maxScore, averages.rawAccuracyPct, averages.levelAccuracyPct,
+        ActualMultiplier(good), MaxMultiplier(good), components.firstMini, components.secondMini,
+        components.beforeSwing, components.afterSwing, components.swingAngleScore(), components.noteAccuracyScore(),
+        100 - accuracyWeight, accuracyWeight);
 
     if (movement) preSwingDegrees.erase(movement);
     if (counter) postSwingDegrees.erase(counter);
@@ -454,9 +414,7 @@ MAKE_HOOK_MATCH(CA_NoteWasCut,
                     ExpectedSide(noteController->noteData),
                     coreDirection,
                     ToDepthSplitRatios(first),
-                    ToDepthSplitRatios(second),
-                    FreezeBox(t),
-                    static_cast<double>(UnityEngine::Time::get_time())
+                    ToDepthSplitRatios(second)
                 };
             } else {
                 CutAccuracyLogger.warn("No usable split axis for note; completed scoring will count it as zero");
@@ -473,7 +431,7 @@ MAKE_HOOK_MATCH(CA_ComputeSwingRating,
 
     const float vanilla = CA_ComputeSwingRating(self, overrideSegmentAngle, overrideValue);
     if (!self || self->_validCount <= 0 || self->_data.size() == 0) return vanilla;
-    const double fullSwingDegrees = CurrentScoreWeights().swingFullAngleDeg;
+    const double fullSwingDegrees = CurrentScoreWeights().beforeSwingFullAngleDeg;
 
     const auto data = self->_data;
     const int length = data.size();
@@ -511,7 +469,7 @@ MAKE_HOOK_MATCH(CA_ProcessNewSwingData,
     CA_ProcessNewSwingData(self, newData, prevData, prevDataAreValid);
 
     double& degrees = postSwingDegrees[self];
-    const double fullSwingDegrees = CurrentScoreWeights().swingFullAngleDeg;
+    const double fullSwingDegrees = CurrentScoreWeights().afterSwingFullAngleDeg;
     if (degrees >= fullSwingDegrees || !prevDataAreValid) return;
 
     if (!wasPastPlane && self->_notePlaneWasCut) {
@@ -535,7 +493,9 @@ MAKE_HOOK_MATCH(CA_ScoreControllerStart, &ScoreController::Start, void, ScoreCon
     ClearFlyingScores();
     pendingScoreOverrides.clear();
     ResetSession();
-    CutAccuracyLogger.info("CutAccuracy session difficulty {}", CurrentDifficultyName());
+    CutAccuracyLogger.info(
+        "CutAccuracy session scoring blend: swing {}% / note accuracy {}%",
+        100 - CurrentAccuracyWeightPercent(), CurrentAccuracyWeightPercent());
     CA_ScoreControllerStart(self);
 
     // Defensive lifecycle handling: ScoreController normally starts once per play

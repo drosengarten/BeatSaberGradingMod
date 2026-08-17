@@ -25,7 +25,6 @@ struct FloatingState {
 };
 
 std::unordered_map<GlobalNamespace::IReadonlyCutScoreBuffer*, FloatingState> states;
-std::size_t scoreTextVariantSeed = 0;
 
 void Apply(GlobalNamespace::IReadonlyCutScoreBuffer* buffer) {
     const auto it = states.find(buffer);
@@ -69,7 +68,7 @@ void PresentCustomFlyingScore(
     auto* readOnly = buffer->i___GlobalNamespace__IReadonlyCutScoreBuffer();
     states[readOnly].customScore = CutAccuracy::formatPerNoteScore(components);
     states[readOnly].accuracyPct = std::clamp(components.total(), 0.0, 100.0);
-    states[readOnly].customText = FlyingScoreTextForAccuracy(states[readOnly].accuracyPct, scoreTextVariantSeed++);
+    states[readOnly].customText = FlyingScoreTextForAccuracy(states[readOnly].accuracyPct);
     Apply(readOnly);
 }
 
@@ -81,7 +80,7 @@ void PresentFixedFlyingScore(
     auto* readOnly = buffer->i___GlobalNamespace__IReadonlyCutScoreBuffer();
     states[readOnly].customScore = CutAccuracy::formatFixedScore(score, maxScore);
     states[readOnly].accuracyPct = maxScore > 0.0 ? std::clamp(score / maxScore * 100.0, 0.0, 100.0) : 0.0;
-    states[readOnly].customText = FlyingScoreTextForAccuracy(states[readOnly].accuracyPct, scoreTextVariantSeed++);
+    states[readOnly].customText = FlyingScoreTextForAccuracy(states[readOnly].accuracyPct);
     Apply(readOnly);
 }
 
@@ -96,7 +95,6 @@ void ReapplyCustomFlyingScore(GlobalNamespace::FlyingScoreEffect* effect) {
 
 void ClearFlyingScores() {
     states.clear();
-    scoreTextVariantSeed = 0;
 }
 
 } // namespace CutAccuracyQuest

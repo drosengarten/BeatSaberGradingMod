@@ -7,7 +7,7 @@
   "modloader": "Scotland2",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.40.8_7379",
-  "description": "100-point directional mini-note, swing and through-note-speed scoring prototype.",
+  "description": "Adjustable /100 swing-angle and four-mini-note accuracy scoring.",
   "modFiles": [],
   "lateModFiles": ["${binary}"],
   "libraryFiles": []

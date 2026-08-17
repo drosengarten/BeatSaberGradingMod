@@ -1,12 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/QuestPackageManager/QPM.Package/refs/heads/main/qpm.schema.json",
-  "version": "0.11.5",
+  "version": "0.12.2",
   "sharedDir": "shared",
   "dependenciesDir": "extern",
   "info": {
     "name": "CutAccuracy",
     "id": "cutaccuracy",
-    "version": "0.11.5",
+    "version": "0.12.2",
     "url": null,
     "additionalData": {
       "overrideSoName": "libcutaccuracy.so"

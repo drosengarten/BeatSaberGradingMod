@@ -10,20 +10,18 @@ enum class SaberSide { Left, Right };
 struct SaberAverages {
     std::size_t notes{0};
     std::size_t componentSamples{0};
-    std::size_t speedSamples{0};
-    double accuracyPct{0.0};      // Alias retained for rawAccuracyPct/backward tests.
+    double accuracyPct{0.0};
     double rawAccuracyPct{0.0};
     double levelAccuracyPct{0.0};
     double firstMiniPct{0.0};
     double secondMiniPct{0.0};
     double beforeSwingPct{0.0};
     double afterSwingPct{0.0};
-    double speedPct{0.0};
 };
 
 struct SessionAverages {
     std::size_t notes{0};
-    double accuracyPct{0.0};      // Alias retained for rawAccuracyPct/backward tests.
+    double accuracyPct{0.0};
     double rawAccuracyPct{0.0};
     double levelAccuracyPct{0.0};
     SaberAverages left{};
@@ -49,7 +47,6 @@ public:
 private:
     std::size_t notes_{0};
     std::size_t componentSamples_{0};
-    std::size_t speedSamples_{0};
     NoteComponents sums_{};
     double rawEarned_{0.0};
     double rawMax_{0.0};
