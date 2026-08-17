@@ -3,7 +3,6 @@
 #include "CutAccuracy/Scoring.hpp"
 #include "CutAccuracy/Geometry.hpp"
 #include "CutAccuracy/Stats.hpp"
-#include "CutAccuracy/Traversal.hpp"
 
 #include <optional>
 #include <unordered_map>
@@ -26,12 +25,9 @@ struct PendingCut {
     CutAccuracy::CutDirection cutDirection{CutAccuracy::CutDirection::None};
     DepthSplitMiniRatios firstMiniRatios{};
     DepthSplitMiniRatios secondMiniRatios{};
-    CutAccuracy::OrientedBox frozenBox{};
-    double cutClockTime{0.0};
 };
 
 extern CutAccuracy::SessionStats sessionStats;
-extern std::size_t traversalMissingCount;
 extern std::size_t dotNotesScored;
 extern std::size_t chainLinksScored;
 extern std::size_t objectsIgnored;

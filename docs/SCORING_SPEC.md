@@ -1,78 +1,80 @@
-# CutAccuracy v0.11 scoring spec
+# CutAccuracy v0.12.1 scoring spec
 
 ## Object policy
 
-CutAccuracy v0.11 counts only scoreable cut objects. Hazards and unhittable/non-score objects are ignored for both `RAW ACC` and `LEVEL ACC`.
+CutAccuracy counts scoreable cut objects only. Hazards and unhittable/non-score objects are ignored for both `RAW ACC` and `LEVEL ACC`.
 
 | Beat Saber scoring object | Custom max | Mechanism |
 |---|---:|---|
-| Normal arrow note | 100 | full 100-point cube model |
-| Normal dot note | 100 | full cube model, split axis from saber travel |
-| ArcHead | 100 | full cube model |
-| ArcTail | 100 | full cube model |
-| ArcHeadArcTail | 100 | full cube model |
-| ChainHead | 100 | full cube model |
-| ChainHeadArcTail | 100 | full cube model |
-| ChainHeadArcHead | 100 | full cube model, supported defensively |
-| ChainHeadArcHeadArcTail | 100 | full cube model, supported defensively |
-| ChainLink | 20 | fixed 20 on hit, 0 on miss/bad cut |
-| ChainLinkArcHead | 20 | fixed 20 on hit, 0 on miss/bad cut |
-| NoScore | 0 | excluded |
-| Ignore | 0 | excluded |
+| Normal arrow note | 100 | blended swing/accuracy model |
+| Normal dot note | 100 | same model, split axis from saber travel |
+| ArcHead / ArcTail / supported combined full-size types | 100 | blended swing/accuracy model |
+| ChainHead / supported combined chain-head types | 100 | blended swing/accuracy model |
+| ChainLink / ChainLinkArcHead | 20 | fixed 20 on hit, 0 on miss/bad cut |
+| NoScore / Ignore | 0 | excluded |
 | Bombs/walls/hazards | 0 | ignored for accuracy |
 | Unknown/unhittable | 0 | ignored for accuracy |
 
-## Full-size note raw score
+## Two /100 endpoint models
 
-A full-size scoreable note has a 100-point custom cut score:
+Each full-size note computes two complete scores out of 100, then blends them with the user setting.
 
-- First/upper mini-note volume balance: 25
-- Second/lower mini-note volume balance: 25
-- Before-swing angle up to 60 degrees: 20
-- After-swing angle up to 60 degrees: 20
-- Through-note traversal speed: 10
+### Swing-angle endpoint
 
-Mini-note score uses the smaller volume fraction on either side of the saber cut plane:
+Swing angle follows the standard 70/30 point split with fixed angle targets:
 
-`score = min(V1,V2)/(V1+V2) * 50`
+- Before swing: 70 points at 100 degrees.
+- After swing: 30 points at 60 degrees.
 
-The speed score is:
+Both are linear and clamp at full credit:
 
-`10 * min(1, 0.100 / traversalSeconds)`
+`before = 70 * clamp(beforeDegrees / 100, 0, 1)`
+
+`after = 30 * clamp(afterDegrees / 60, 0, 1)`
+
+`swingScore = before + after`
+
+### Note-accuracy endpoint
+
+The note is split by its cut direction into upper/lower halves, then each half is split again through note depth. This yields four independent mini-notes. Each mini-note is worth 25 points.
+
+For each mini-note:
+
+`miniScore = 25 * clamp((smallerVolumeRatio / 0.5), 0, 1)`
+
+So 50/50 scores 25, 60/40 scores 20, and 100/0 scores 0.
+
+`noteAccuracyScore = mini1 + mini2 + mini3 + mini4`
+
+The HUD shows Upper and Lower as the averages of their two depth mini-notes, but all four 25-point mini-notes contribute independently to `noteAccuracyScore`.
+
+## Scoring-style slider and presets
+
+The setting is a whole-percent slider from 0 to 100, where the value is the note-accuracy weight.
+
+`finalScore = swingScore * (1 - accuracyWeight) + noteAccuracyScore * accuracyWeight`
+
+The only named presets are:
+
+- Classic Feel: 0% note accuracy / 100% swing angle.
+- Standard Beat Saber: 13% note accuracy / 87% swing angle.
+- Precision Mode: 100% note accuracy / 0% swing angle.
+
+The slider may still be placed at any whole percentage between these presets.
 
 ## Chain links
 
-Chain links intentionally do not use the cube model. They match the vanilla-style fixed-link behavior:
+Chain links intentionally do not use the cube model. They remain fixed objects:
 
 `hit = 20 / 20`
 
 `miss or bad cut = 0 / 20`
 
-Chain links increase the raw/level denominator but do not affect Upper, Lower, Before, After, or Speed component rows.
+They affect raw/level denominators but do not populate Upper, Lower, Before, or After HUD rows.
 
-## Raw accuracy
-
-Raw accuracy exposes physical cut quality and chain-link completion. Misses/bad cuts for scoreable objects remain zeroes:
+## Raw and combo-weighted level accuracy
 
 `rawAccuracy = rawEarned / rawMax * 100`
-
-For a full-size note:
-
-`rawEarned += customNoteScore`
-
-`rawMax += 100`
-
-For a chain link:
-
-`rawEarned += 20 if hit else 0`
-
-`rawMax += 20`
-
-Ignored objects add nothing to either side.
-
-## Combo-weighted level accuracy
-
-Level accuracy uses Beat Saber's combo multiplier values stored on each scoring element:
 
 `levelEarned += objectScore * actualMultiplier`
 
@@ -80,29 +82,8 @@ Level accuracy uses Beat Saber's combo multiplier values stored on each scoring 
 
 `levelAccuracy = levelEarned / levelMax * 100`
 
-This means a perfect 100-point full note at x8 contributes 800, while a perfect 20-point chain link at x8 contributes 160.
+## Built-in Beat Saber score override
 
-## Traversal diagnostic policy
+The blended full-note result is already a complete /100 score. CutAccuracy stores the rounded custom result in one 100-point Beat Saber score bucket, keeping the built-in denominator exact for every slider percentage.
 
-During headset validation, an unobserved traversal interval is treated as a measurement failure, not proof of a slow cut. The full-size note receives neutral speed credit, but `speedObserved=false`; the Speed row omits that note from its denominator and the Quest log increments `traversalMissingCount`.
-
-After live validation confirms stable traversal, this policy can be changed to score unknown traversal as zero or to reject custom scoring for that note.
-
-
-## Built-in Beat Saber score override (v0.11)
-
-CutAccuracy now patches Beat Saber's stored/built-in score numerator and max-score denominator so the
-built-in result and select-screen percentage use the CutAccuracy LEVEL ACC
-ratio. The mod does **not** write raw custom points into Beat Saber's vanilla
-115-point denominator. Instead, after each tracked scoring object it computes:
-
-```text
-builtinScore = round(CutAccuracy_LEVEL_EARNED)
-builtinMax   = round(CutAccuracy_LEVEL_MAX)
-```
-
-So a 95% CutAccuracy level with custom totals of 9500 / 10000 stores score
-9500 and max 10000, producing 95.00%, not 9500 / 11500 = 82.61%.
-
-This intentionally changes the built-in saved/local score path. Use it as an
-offline/custom-scoring mod unless leaderboard behavior has been checked.
+The level numerator and max denominator are also rewritten into CutAccuracy's score space so a custom 9500 / 10000 remains 95.00%, rather than being interpreted against Beat Saber's normal 115-point note denominator.

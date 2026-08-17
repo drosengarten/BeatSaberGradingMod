@@ -3,7 +3,6 @@
 namespace CutAccuracyQuest {
 
 CutAccuracy::SessionStats sessionStats{};
-std::size_t traversalMissingCount{0};
 std::size_t dotNotesScored{0};
 std::size_t chainLinksScored{0};
 std::size_t objectsIgnored{0};
@@ -17,7 +16,6 @@ std::unordered_map<GlobalNamespace::SaberSwingRatingCounter*, double> postSwingD
 
 void ResetSession() {
     sessionStats.reset();
-    traversalMissingCount = 0;
     dotNotesScored = 0;
     chainLinksScored = 0;
     objectsIgnored = 0;

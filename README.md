@@ -1,78 +1,51 @@
-# CutAccuracy v0.11
+# CutAccuracy v0.12.2
 
-Quest standalone Beat Saber 1.40.8 source package for the custom cut-accuracy metric.
+Quest standalone Beat Saber 1.40.8 source package for a custom /100 cut-scoring model.
 
-## Scoring summary
+## Full-size note scoring
 
-CutAccuracy separates **quality display** from **object max score**:
+Every full-size scoreable note computes two complete /100 endpoint scores:
 
-- Full-size scoreable notes are scored out of **100**.
-- Chain links are fixed **20 on hit / 0 on miss or bad cut**.
-- Hazards, bombs, walls, `NoScore`, `Ignore`, and unknown/unhittable objects are ignored for `RAW ACC` and `LEVEL ACC`.
+- **Swing angle:** 70 points before the cut at 100 degrees, plus 30 points after the cut at 60 degrees.
+- **Note accuracy:** four independent geometric mini-notes worth 25 points each.
 
-## Full-size note model
+A whole-percent slider blends those endpoint scores. The only named presets are:
 
-Full-size notes include ordinary arrow notes, dot notes, arc endpoints, chain heads, and supported combined full-size arc/chain-head types. Each full-size note is scored out of 100:
+- **Classic Feel:** 100% swing angle / 0% note accuracy.
+- **Standard Beat Saber:** 87% swing angle / 13% note accuracy.
+- **Precision Mode:** 0% swing angle / 100% note accuracy.
 
-- First/upper mini-note volume balance: 25
-- Second/lower mini-note volume balance: 25
-- Before-swing angle: 20
-- After-swing angle: 20
-- Through-note traversal speed: 10
+The slider remains continuous between those presets and snaps to the nearest whole percent. The settings screen shows `Swing angle x% / Note accuracy y%` below it.
 
-Dot notes use the actual saber travel direction at the cut to choose the temporary mini-note split axis.
+Speed is not part of the score.
 
-## Chain links
+## HUD
 
-Chain links do not use the cube/mini-note model. A successful chain link contributes 20/20. A missed or bad-cut chain link contributes 0/20.
+The HUD keeps `LEVEL ACC` and `RAW ACC`, plus exactly four per-saber rows:
 
-## HUD values
+- Upper
+- Lower
+- Before
+- After
 
-The persistent HUD displays two headline values:
+Missing metric data for a saber displays `-`. There is no speed row.
 
-- `LEVEL ACC`: combo-weighted custom level accuracy.
-- `RAW ACC`: physical cut accuracy / chain-link completion, not combo-weighted.
+## Custom flying-score text
 
-The level score math is:
+Custom below-note text remains optional. There is one editable phrase for each range: `0-9`, `10-19`, ... `90-99`, and `100`. The old A/B alternate-phrase system is removed.
 
-```text
-rawEarned   += objectScore
-rawMax      += objectMax
+## Other object handling
 
-levelEarned += objectScore * actualMultiplier
-levelMax    += objectMax * maxPossibleMultiplier
-```
+- Full-size normal notes, supported arc endpoints, and chain heads use the /100 model.
+- Chain links remain fixed 20 on hit / 0 on miss or bad cut.
+- Bombs, walls, `NoScore`, `Ignore`, and unknown/unhittable objects do not affect custom accuracy denominators.
 
-Examples:
+## Built-in score override
 
-```text
-Perfect full note at x8:       100 * 8 / 100 * 8
-Perfect chain link at x8:       20 * 8 /  20 * 8
-Missed chain link at x8:         0 * 8 /  20 * 8
-Bomb/wall/NoScore/Ignore:        ignored, no denominator
-```
+CutAccuracy rewrites Beat Saber's score/max-score path into the custom score space so the built-in percentage follows `LEVEL ACC` rather than treating custom notes as if they were still out of 115.
 
-## v0.11 runtime improvements
-
-- hazards/unhittable objects are ignored for raw accuracy;
-- `NoScore` and `Ignore` are excluded from all custom accuracy denominators;
-- full-size arc endpoints and chain heads are supported as 100-max notes;
-- chain links are fixed 20/0 objects;
-- chain links do not pollute the Upper/Lower/Before/After/Speed component rows;
-- the panel remains attached above the live Combo UI;
-- the floating score replacement is reapplied inside `FlyingScoreEffect::RefreshScore`.
+Treat this as an offline/custom-scoring mod until leaderboard behavior is separately verified.
 
 ## Build status
 
-The host suite passes in this environment, including sanitizer checks. A `.qmod` was not built here because the environment does not include QPM or the Android NDK cross-compiler.
-
-
-## v0.11 built-in score override
-
-v0.11 is Option B true-internal mode: Beat Saber's score model/max-score
-denominator and current score total are rewritten into CutAccuracy's own score
-space. If CutAccuracy's current level score is 9500 / 10000, Beat Saber is kept
-at 9500 / 10000 too, not 9500 / 11500.
-
-This is a deliberate custom-scoring override, not just an overlay. Treat it as
-offline/local until leaderboard interactions are verified.
+The host test suite passes in this environment. A final Quest `.qmod` cannot be produced here without the QPM/Android NDK toolchain, but the Quest-side source has been updated against the project's declared BSML API.
