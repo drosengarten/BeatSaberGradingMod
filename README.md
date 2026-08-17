@@ -17,8 +17,6 @@ A whole-percent slider blends those endpoint scores. The only named presets are:
 
 The slider remains continuous between those presets and snaps to the nearest whole percent. The settings screen shows `Swing angle x% / Note accuracy y%` below it.
 
-Speed is not part of the score.
-
 ## HUD
 
 The HUD keeps `LEVEL ACC` and `RAW ACC`, plus exactly four per-saber rows:
@@ -28,11 +26,11 @@ The HUD keeps `LEVEL ACC` and `RAW ACC`, plus exactly four per-saber rows:
 - Before
 - After
 
-Missing metric data for a saber displays `-`. There is no speed row.
+Missing metric data for a saber displays `-`.
 
 ## Custom flying-score text
 
-Custom below-note text remains optional. There is one editable phrase for each range: `0-9`, `10-19`, ... `90-99`, and `100`. The old A/B alternate-phrase system is removed.
+Custom below-note text is optional. There is one editable phrase for each range: `0-9`, `10-19`, ... `90-99`, and `100`.
 
 ## Other object handling
 
@@ -43,9 +41,3 @@ Custom below-note text remains optional. There is one editable phrase for each r
 ## Built-in score override
 
 CutAccuracy rewrites Beat Saber's score/max-score path into the custom score space so the built-in percentage follows `LEVEL ACC` rather than treating custom notes as if they were still out of 115.
-
-Treat this as an offline/custom-scoring mod until leaderboard behavior is separately verified.
-
-## Build status
-
-The host test suite passes in this environment. A final Quest `.qmod` cannot be produced here without the QPM/Android NDK toolchain, but the Quest-side source has been updated against the project's declared BSML API.
