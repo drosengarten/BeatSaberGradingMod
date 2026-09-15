@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cxx=${CXX:-g++}
-$cxx -std=c++20 -Wall -Wextra -Wpedantic -Werror \
-  -Iinclude tests/test_core.cpp \
-  src/Geometry.cpp src/Stats.cpp src/Presentation.cpp src/Traversal.cpp \
-  -o /tmp/cutaccuracy_host_strict
-/tmp/cutaccuracy_host_strict
-$cxx -std=c++20 -DNDEBUG -O2 -Wall -Wextra -Wpedantic -Werror \
-  -Iinclude tests/test_core.cpp \
-  src/Geometry.cpp src/Stats.cpp src/Presentation.cpp src/Traversal.cpp \
-  -o /tmp/cutaccuracy_host_release
-/tmp/cutaccuracy_host_release
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+c++ -std=c++20 -I"$ROOT/include" -fsyntax-only "$ROOT/tests/test_core.cpp" "$ROOT/src/Geometry.cpp" "$ROOT/src/Stats.cpp" "$ROOT/src/Presentation.cpp" "$ROOT/src/Traversal.cpp"

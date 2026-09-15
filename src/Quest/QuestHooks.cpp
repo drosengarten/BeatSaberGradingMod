@@ -1,18 +1,14 @@
 #include "main.hpp"
 #include "Quest/QuestState.hpp"
 #include "Quest/UnityAdapters.hpp"
-#include "Quest/HudModel.hpp"
 #include "Quest/FloatingScoreView.hpp"
-#include "Quest/QountersHud.hpp"
 #include "Quest/Settings.hpp"
-
 #include "CutAccuracy/Geometry.hpp"
 #include "CutAccuracy/Scoring.hpp"
-
 #include "beatsaber-hook/shared/utils/hooking.hpp"
 #include "beatsaber-hook/shared/utils/il2cpp-utils.hpp"
 #include "custom-types/shared/delegate.hpp"
-
+#include "metacore/shared/game.hpp"
 #include "GlobalNamespace/BeatmapObjectManager.hpp"
 #include "GlobalNamespace/BladeMovementDataElement.hpp"
 #include "GlobalNamespace/GoodCutScoringElement.hpp"
@@ -26,590 +22,190 @@
 #include "GlobalNamespace/SaberSwingRatingCounter.hpp"
 #include "GlobalNamespace/ScoreController.hpp"
 #include "GlobalNamespace/ScoreModel.hpp"
-#include "GlobalNamespace/ComboUIController.hpp"
 #include "GlobalNamespace/FlyingScoreEffect.hpp"
 #include "GlobalNamespace/IReadonlyCutScoreBuffer.hpp"
 #include "GlobalNamespace/ScoringElement.hpp"
 #include "GlobalNamespace/CutScoreBuffer.hpp"
-
 #include "System/Action_1.hpp"
+#include "System/Action_2.hpp"
 #include "UnityEngine/Vector3.hpp"
 #include "UnityEngine/Color.hpp"
-
 #include "beatsaber-hook/shared/utils/byref.hpp"
-
 #include <algorithm>
 #include <cmath>
 #include <exception>
 #include <functional>
 #include <string>
 #include <unordered_map>
-
 using namespace GlobalNamespace;
+namespace CutAccuracyQuest { namespace {
+System::Action_1<ScoringElement*>* scoreFinishedDelegate=nullptr;
+ScoreController* scoreControllerWithDelegate=nullptr;
+std::unordered_map<ScoringElement*,CutAccuracy::BeatSaberCutScoreParts> pendingScoreOverrides;
+std::unordered_map<CutScoreBuffer*,CutAccuracy::BeatSaberCarrierDefinition> bufferCarriers;
+bool runtimeScoringReady=false;
+bool RuntimeCustomScoringActive(){return CustomScoringActive()&&runtimeScoringReady;}
+struct NativeScoreDefinitionSnapshot {
+    int maxCenterDistanceCutScore{};
+    int minBeforeCutScore{};
+    int maxBeforeCutScore{};
+    int minAfterCutScore{};
+    int maxAfterCutScore{};
+    int fixedCutScore{};
+};
+std::unordered_map<ScoreModel_NoteScoreDefinition*, NativeScoreDefinitionSnapshot> nativeScoreDefinitions;
 
-namespace CutAccuracyQuest {
-namespace {
-
-System::Action_1<ScoringElement*>* scoreFinishedDelegate = nullptr;
-ScoreController* scoreControllerWithDelegate = nullptr;
-std::unordered_map<ScoringElement*, CutAccuracy::BeatSaberCutScoreParts> pendingScoreOverrides;
-
-UnityEngine::Vector3 Subtract(UnityEngine::Vector3 lhs, UnityEngine::Vector3 rhs) {
-    return {lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z};
+constexpr double kNativeBeforeFullDeg=100.0,kNativeAfterFullDeg=60.0,kSwingCaptureCapDeg=180.0;
+UnityEngine::Vector3 Subtract(UnityEngine::Vector3 a,UnityEngine::Vector3 b){return{a.x-b.x,a.y-b.y,a.z-b.z};}
+CutAccuracy::CutDirection ToCoreCutDirection(NoteCutDirection d){switch(static_cast<int>(d)){case 0:return CutAccuracy::CutDirection::Up;case 1:return CutAccuracy::CutDirection::Down;case 2:return CutAccuracy::CutDirection::Left;case 3:return CutAccuracy::CutDirection::Right;case 4:return CutAccuracy::CutDirection::UpLeft;case 5:return CutAccuracy::CutDirection::UpRight;case 6:return CutAccuracy::CutDirection::DownLeft;case 7:return CutAccuracy::CutDirection::DownRight;case 8:return CutAccuracy::CutDirection::Any;default:return CutAccuracy::CutDirection::None;}}
+CutAccuracy::SaberSide ExpectedSide(NoteData*n){return static_cast<int>(n->colorType)==0?CutAccuracy::SaberSide::Left:CutAccuracy::SaberSide::Right;}
+int ActualMultiplier(ScoringElement*e){return e?std::max(0,e->get_multiplier()):0;} int MaxMultiplier(ScoringElement*e){return e?std::max(1,e->get_maxMultiplier()):1;}
+CutAccuracy::ProfileKind KindForNote(NoteData*n){if(!n)return CutAccuracy::ProfileKind::Excluded;int color=static_cast<int>(n->colorType);if(color!=0&&color!=1)return CutAccuracy::ProfileKind::Excluded;auto d=ToCoreCutDirection(n->cutDirection);return CutAccuracy::profileKindForScoringType(static_cast<int>(n->scoringType),d==CutAccuracy::CutDirection::Any);}
+bool IsTracked(NoteData*n){return RuntimeCustomScoringActive()&&KindForNote(n)!=CutAccuracy::ProfileKind::Excluded;}
+void RememberNativeDefinition(ScoreModel_NoteScoreDefinition* def) {
+    if (!def || nativeScoreDefinitions.contains(def)) return;
+    nativeScoreDefinitions.emplace(def, NativeScoreDefinitionSnapshot{
+        def->___maxCenterDistanceCutScore,
+        def->___minBeforeCutScore,
+        def->___maxBeforeCutScore,
+        def->___minAfterCutScore,
+        def->___maxAfterCutScore,
+        def->___fixedCutScore
+    });
 }
 
-void PatchScoreDefinition(ScoreModel_NoteScoreDefinition* def, const CutAccuracy::ScoreObjectRule& rule) {
+void RestoreNativeDefinition(ScoreModel_NoteScoreDefinition* def) {
+    if (!def) return;
+    const auto it = nativeScoreDefinitions.find(def);
+    if (it == nativeScoreDefinitions.end()) return;
+    const auto& n = it->second;
+    def->___maxCenterDistanceCutScore = n.maxCenterDistanceCutScore;
+    def->___minBeforeCutScore = n.minBeforeCutScore;
+    def->___maxBeforeCutScore = n.maxBeforeCutScore;
+    def->___minAfterCutScore = n.minAfterCutScore;
+    def->___maxAfterCutScore = n.maxAfterCutScore;
+    def->___fixedCutScore = n.fixedCutScore;
+}
+
+void ApplyCarrierDefinition(ScoreModel_NoteScoreDefinition* def, const CutAccuracy::BeatSaberCarrierDefinition& carrier) {
+    if (!def) return;
+    def->___maxCenterDistanceCutScore = carrier.centerDistanceMax;
+    def->___minBeforeCutScore = 0;
+    def->___maxBeforeCutScore = carrier.beforeMax;
+    def->___minAfterCutScore = 0;
+    def->___maxAfterCutScore = carrier.afterMax;
+    def->___fixedCutScore = carrier.fixed;
+}
+
+void PatchScoreDefinition(ScoreModel_NoteScoreDefinition* def, int scoringType, bool dotNote = false) {
     if (!def) return;
 
-    if (rule.kind == CutAccuracy::ScoreObjectKind::FullNote) {
-        // Preserve Beat Saber's standard 70/30 swing buckets so its native
-        // SaberSwingRatingCounter continues to collect before/after ratings.
-        // CutAccuracy later overwrites the two bucket values with the final
-        // blended /100 result, so note accuracy can still own any slider share.
-        def->___maxCenterDistanceCutScore = 0;
-        def->___minBeforeCutScore = 0;
-        def->___maxBeforeCutScore = 70;
-        def->___minAfterCutScore = 0;
-        def->___maxAfterCutScore = 30;
-        def->___fixedCutScore = 0;
+    // Cache exact Beat Saber values before this mod ever mutates the shared object.
+    // Off can then restore the actual 1.40.8 definition rather than guessing it.
+    RememberNativeDefinition(def);
+    if (!RuntimeCustomScoringActive()) {
+        RestoreNativeDefinition(def);
         return;
     }
 
-    if (rule.kind == CutAccuracy::ScoreObjectKind::ChainLink) {
-        // Chain links intentionally remain Beat Saber-like fixed 20/0 objects.
-        def->___maxCenterDistanceCutScore = 0;
-        def->___minBeforeCutScore = 0;
-        def->___maxBeforeCutScore = 0;
-        def->___minAfterCutScore = 0;
-        def->___maxAfterCutScore = 0;
-        def->___fixedCutScore = 20;
+    const auto kind = CutAccuracy::profileKindForScoringType(scoringType, dotNote);
+    if (kind == CutAccuracy::ProfileKind::Excluded) {
+        // Unknown/no-score types are not part of Cut Accuracy. Preserve the
+        // game's native definition instead of guessing that zero-score is safe.
+        RestoreNativeDefinition(def);
         return;
     }
 
-    // NoScore and other excluded score definitions contribute no denominator.
-    def->___maxCenterDistanceCutScore = 0;
-    def->___minBeforeCutScore = 0;
-    def->___maxBeforeCutScore = 0;
-    def->___minAfterCutScore = 0;
-    def->___maxAfterCutScore = 0;
-    def->___fixedCutScore = 0;
-}
-
-CutAccuracy::SaberSide ExpectedSide(NoteData* note) {
-    // Beat Saber NoteData uses the two normal note types as A=0 and B=1.
-    // This keeps misses and wrong-saber cuts charged to the saber intended by the map.
-    return static_cast<int>(note->colorType) == 0
-        ? CutAccuracy::SaberSide::Left
-        : CutAccuracy::SaberSide::Right;
-}
-
-CutAccuracy::CutDirection ToCoreCutDirection(NoteCutDirection direction) {
-    switch (static_cast<int>(direction)) {
-        case 0: return CutAccuracy::CutDirection::Up;
-        case 1: return CutAccuracy::CutDirection::Down;
-        case 2: return CutAccuracy::CutDirection::Left;
-        case 3: return CutAccuracy::CutDirection::Right;
-        case 4: return CutAccuracy::CutDirection::UpLeft;
-        case 5: return CutAccuracy::CutDirection::UpRight;
-        case 6: return CutAccuracy::CutDirection::DownLeft;
-        case 7: return CutAccuracy::CutDirection::DownRight;
-        case 8: return CutAccuracy::CutDirection::Any;
-        case 9: return CutAccuracy::CutDirection::None;
-        default: return CutAccuracy::CutDirection::None;
-    }
-}
-
-int ActualMultiplier(ScoringElement* element) {
-    return element ? std::max(0, element->get_multiplier()) : 0;
-}
-
-int MaxMultiplier(ScoringElement* element) {
-    return element ? std::max(1, element->get_maxMultiplier()) : 1;
-}
-
-CutAccuracy::ScoreObjectRule RuleForNote(NoteData* note) {
-    if (!note) return {};
-
-    const int color = static_cast<int>(note->colorType);
-    if (color != 0 && color != 1) return {}; // hazards/unhittable/non-colored objects never affect accuracy.
-
-    auto rule = CutAccuracy::scoreObjectRuleForScoringType(static_cast<int>(note->scoringType));
-    if (rule.kind == CutAccuracy::ScoreObjectKind::Excluded) return rule;
-
-    const auto direction = ToCoreCutDirection(note->cutDirection);
-    if (rule.usesCubeModel && direction == CutAccuracy::CutDirection::None) {
-        return {CutAccuracy::ScoreObjectKind::Excluded, 0.0, false, false, "NoCutDirection"};
-    }
-    return rule;
-}
-
-bool IsTrackedScoringObject(NoteData* note) {
-    return RuleForNote(note).kind != CutAccuracy::ScoreObjectKind::Excluded;
-}
-
-bool UsesCubeModel(NoteData* note) {
-    return RuleForNote(note).usesCubeModel;
-}
-
-CutAccuracy::Vec3 ResolveSplitAxisLocal(
-    NoteData* note,
-    UnityEngine::Transform* noteTransform,
-    const NoteCutInfo& noteCutInfo
-) {
-    if (!note || !noteTransform) return {0,0,0};
-
-    const auto direction = ToCoreCutDirection(note->cutDirection);
-
-    // Dot notes: no map-specified cut direction exists. Score them as genuine
-    // normal notes by defining the split axis from the player's actual saber
-    // travel direction at the cut. Misses still count as zero through CommitMiss.
-    if (direction == CutAccuracy::CutDirection::Any) {
-        auto local = LocalDirectionToNotePlane(noteTransform, noteCutInfo.saberDir);
-        if (CutAccuracy::lengthSq(local) > 1e-8) {
-            ++dotNotesScored;
-            return local;
-        }
-        return {0,0,0};
-    }
-
-    if (!CutAccuracy::hasDirectionalSplit(direction)) return {0,0,0};
-
-    const auto worldAxis = CutAccuracy::splitAxisForCutDirection(
-        direction, static_cast<double>(note->cutDirectionAngleOffset));
-
-    // Beat Saber note transforms may already be arrow-aligned. If local +Y
-    // points along the map's cut axis in world space, use local +Y and avoid
-    // double-applying the note direction. If not, convert the map direction
-    // into the current note local frame. This handles both stock and altered
-    // note transform conventions more safely than either assumption alone.
-    const auto localUpWorld = LocalNoteUpWorld(noteTransform);
-    const double aligned = std::abs(CutAccuracy::dot(localUpWorld, CutAccuracy::normalized(worldAxis)));
-    if (aligned > 0.75) return {0, 1, 0};
-
-    auto localAxis = WorldDirectionToLocalNotePlane(noteTransform, worldAxis);
-    if (CutAccuracy::lengthSq(localAxis) > 1e-8) return localAxis;
-    return {0, 1, 0};
-}
-
-void ApplyScoreParts(CutScoreBuffer* buffer, const CutAccuracy::BeatSaberCutScoreParts& parts) {
-    if (!buffer) return;
-    buffer->_centerDistanceCutScore = parts.centerDistance;
-    buffer->_beforeCutScore = parts.before;
-    buffer->_afterCutScore = parts.after;
-}
-
-void ApplyPendingScoreOverride(ScoringElement* element) {
-    if (!element) return;
-
-    auto it = pendingScoreOverrides.find(element);
-    if (it == pendingScoreOverrides.end()) return;
-
-    if (auto good = il2cpp_utils::try_cast<GoodCutScoringElement>(element)) {
-        ApplyScoreParts(good.value()->_cutScoreBuffer, it->second);
-    }
-}
-
-DepthSplitMiniRatios ToDepthSplitRatios(const CutAccuracy::DepthSplitMiniNoteVolumes& volumes) {
-    return {
-        CutAccuracy::smallerRatio(volumes.negativeDepth),
-        CutAccuracy::smallerRatio(volumes.positiveDepth)
-    };
-}
-
-double MiniScore(const DepthSplitMiniRatios& ratios, const CutAccuracy::ScoreWeights& weights) {
-    return CutAccuracy::miniNoteScoreFromDepthSplitRatios(
-        ratios.negativeDepth,
-        ratios.positiveDepth,
-        weights
-    );
-}
-
-void SyncBuiltinScoreOverride() {
-    if (!scoreControllerWithDelegate) return;
-
-    // Option B true-internal mode: overwrite both Beat Saber's current score and
-    // Beat Saber's current max score with CutAccuracy's integer score space. This
-    // prevents the 100/115 mismatch and also prevents the score display from being
-    // merely a vanilla-denominator projection.
-    const int customMax = CutAccuracy::customInternalMaxScore(sessionStats.levelMax());
-    if (customMax <= 0) return;
-
-    const int overrideScore = CutAccuracy::customInternalScoreFromCustomLevel(
-        sessionStats.levelEarned(), sessionStats.levelMax());
-
-    scoreControllerWithDelegate->_multipliedScore = overrideScore;
-    scoreControllerWithDelegate->_immediateMaxPossibleMultipliedScore = customMax;
-    lastBuiltinScoreOverride = overrideScore;
-    lastBuiltinMaxScoreObserved = customMax;
-    ++builtinScoreOverridesApplied;
-}
-
-void CommitMiss(NoteData* note, int maxMultiplier = 1) {
-    const auto rule = RuleForNote(note);
-    if (rule.kind == CutAccuracy::ScoreObjectKind::Excluded) {
-        ++objectsIgnored;
-        if (rule.name && std::string(rule.name) == "Unknown") ++unknownScoringTypesIgnored;
-        pendingCuts.erase(note);
+    // Chain links are natively fixed-score objects. If their custom profile is
+    // also flat-only, keep the native definition so Beat Saber's chain-link
+    // scoring lifecycle is left untouched. Only switch them to a measurement
+    // carrier when the user explicitly enables Precise/Center/Before/After.
+    const auto profile = CurrentProfile(kind);
+    if (CutAccuracy::usesNativeFixedCarrier(kind, profile)) {
+        ApplyCarrierDefinition(def, CutAccuracy::beatSaberFixedCarrier(profile.maxScore));
         return;
     }
 
-    sessionStats.forSide(ExpectedSide(note)).addMissWeighted(rule.maxScore, maxMultiplier);
-    pendingCuts.erase(note);
-    SyncBuiltinScoreOverride();
-    MarkHudDirty();
+    // Custom-scored objects still need Beat Saber's center/swing measurements,
+    // but the carrier maximum must match the selected profile maximum. If it
+    // stays at 115 while the profile max is 100, Beat Saber's level accuracy UI
+    // can divide the custom score by the wrong denominator.
+    ApplyCarrierDefinition(def, CutAccuracy::beatSaberMeasurementCarrier(profile.maxScore));
 }
 
-void CommitGood(GoodCutScoringElement* good) {
-    if (!good || !good->noteData) return;
-    auto* note = good->noteData;
-    const auto rule = RuleForNote(note);
-    if (rule.kind == CutAccuracy::ScoreObjectKind::Excluded) {
-        ++objectsIgnored;
-        if (rule.name && std::string(rule.name) == "Unknown") ++unknownScoringTypesIgnored;
-        pendingCuts.erase(note);
-        return;
-    }
-
-    auto* buffer = good->_cutScoreBuffer;
-
-    if (rule.kind == CutAccuracy::ScoreObjectKind::ChainLink) {
-        sessionStats.forSide(ExpectedSide(note)).addFixed(rule.maxScore, rule.maxScore, ActualMultiplier(good), MaxMultiplier(good));
-        SyncBuiltinScoreOverride();
-        ++chainLinksScored;
-        PresentFixedFlyingScore(buffer, rule.maxScore, rule.maxScore);
-        CutAccuracyLogger.info(
-            "chain link {:.0f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{}",
-            rule.maxScore, rule.maxScore, sessionStats.averages().rawAccuracyPct,
-            sessionStats.averages().levelAccuracyPct, ActualMultiplier(good), MaxMultiplier(good));
-        MarkHudDirty();
-        return;
-    }
-
-    const auto it = pendingCuts.find(note);
-    if (it == pendingCuts.end()) {
-        CutAccuracyLogger.warn("No pending cut geometry for {}; counting zero", rule.name);
-        CommitMiss(note, MaxMultiplier(good));
-        return;
-    }
-
-    const PendingCut pending = it->second;
-    pendingCuts.erase(it);
-
-    auto* counter = buffer ? buffer->_saberSwingRatingCounter : nullptr;
-    auto* movement = counter ? (SaberMovementData*)counter->_saberMovementData : nullptr;
-
-    const auto weights = CurrentScoreWeights();
-
-    // Use Beat Saber's completed native swing ratings as the source of truth.
-    // In 1.40.8 these are normalized against the standard 100-degree before
-    // and 60-degree after targets. The old pointer-keyed hook caches remain as
-    // a defensive fallback for unusual lifecycle/order cases.
-    double beforeDeg = 0.0;
-    double afterDeg = 0.0;
-    if (buffer && counter) {
-        const double beforeRating = std::clamp(static_cast<double>(buffer->get_beforeCutSwingRating()), 0.0, 1.0);
-        const double afterRating = std::clamp(static_cast<double>(buffer->get_afterCutSwingRating()), 0.0, 1.0);
-        beforeDeg = beforeRating * weights.beforeSwingFullAngleDeg;
-        afterDeg = afterRating * weights.afterSwingFullAngleDeg;
-    }
-    if (beforeDeg <= 1e-6 && movement && preSwingDegrees.contains(movement)) {
-        beforeDeg = preSwingDegrees[movement];
-    }
-    if (afterDeg <= 1e-6 && counter && postSwingDegrees.contains(counter)) {
-        afterDeg = postSwingDegrees[counter];
-    }
-
-    const int accuracyWeight = CurrentAccuracyWeightPercent();
-    CutAccuracy::NoteComponents components{
-        MiniScore(pending.firstMiniRatios, weights),
-        MiniScore(pending.secondMiniRatios, weights),
-        CutAccuracy::beforeSwingScore(beforeDeg, weights),
-        CutAccuracy::afterSwingScore(afterDeg, weights),
-        accuracyWeight
-    };
-
-    const auto scoreParts = CutAccuracy::beatSaberCutScoreParts(components, weights);
-    pendingScoreOverrides[good] = scoreParts;
-    ApplyScoreParts(buffer, scoreParts);
-
-    sessionStats.forSide(pending.side).addWeighted(components, rule.maxScore, ActualMultiplier(good), MaxMultiplier(good), weights);
-    SyncBuiltinScoreOverride();
-    PresentCustomFlyingScore(buffer, components);
-
-    const auto averages = sessionStats.averages(weights);
-    CutAccuracyLogger.info(
-        "{} {:.1f}/{:.0f} | raw {:.2f}% level {:.2f}% | mult {}/{} | upper {:.1f} lower {:.1f} | before {:.1f}/70 after {:.1f}/30 | swing {:.1f} accuracy {:.1f} | weights swing {}% accuracy {}%",
-        rule.name, components.total(), rule.maxScore, averages.rawAccuracyPct, averages.levelAccuracyPct,
-        ActualMultiplier(good), MaxMultiplier(good), components.firstMini, components.secondMini,
-        components.beforeSwing, components.afterSwing, components.swingAngleScore(), components.noteAccuracyScore(),
-        100 - accuracyWeight, accuracyWeight);
-
-    if (movement) preSwingDegrees.erase(movement);
-    if (counter) postSwingDegrees.erase(counter);
-    MarkHudDirty();
+CutAccuracy::Vec3 ResolveSplitAxisLocal(NoteData*n,UnityEngine::Transform*t,const NoteCutInfo&info){if(!n||!t)return{0,0,0};auto d=ToCoreCutDirection(n->cutDirection);if(d==CutAccuracy::CutDirection::Any){auto local=LocalDirectionToNotePlane(t,info.saberDir);if(CutAccuracy::lengthSq(local)>1e-8){++dotNotesScored;return local;}return{0,0,0};}if(!CutAccuracy::hasDirectionalSplit(d))return{0,0,0};auto worldAxis=CutAccuracy::splitAxisForCutDirection(d,static_cast<double>(n->cutDirectionAngleOffset));auto localUpWorld=LocalNoteUpWorld(t);double aligned=CutAccuracy::dot(localUpWorld,CutAccuracy::normalized(worldAxis));if(aligned>0.75)return{0,1,0};if(aligned<-0.75)return{0,-1,0};auto local=WorldDirectionToLocalNotePlane(t,worldAxis);return CutAccuracy::lengthSq(local)>1e-8?local:CutAccuracy::Vec3{0,1,0};}
+DepthSplitMiniRatios Ratios(const CutAccuracy::DepthSplitMiniNoteVolumes&v){return{CutAccuracy::smallerRatio(v.negativeDepth),CutAccuracy::smallerRatio(v.positiveDepth)};}
+CutAccuracy::FourMiniNoteQuality FourQuality(const PendingCut&p){return{CutAccuracy::miniQualityFromSmallerRatio(p.upperRatios.negativeDepth),CutAccuracy::miniQualityFromSmallerRatio(p.upperRatios.positiveDepth),CutAccuracy::miniQualityFromSmallerRatio(p.lowerRatios.negativeDepth),CutAccuracy::miniQualityFromSmallerRatio(p.lowerRatios.positiveDepth)};}
+CutAccuracy::BeatSaberCarrierDefinition CarrierForDefinition(ScoreModel_NoteScoreDefinition*def){return def?CutAccuracy::BeatSaberCarrierDefinition{def->___maxCenterDistanceCutScore,def->___maxBeforeCutScore,def->___maxAfterCutScore,def->___fixedCutScore}:CutAccuracy::beatSaberMeasurementCarrier(100);}
+CutAccuracy::BeatSaberCarrierDefinition CarrierForProfile(CutAccuracy::ProfileKind kind,const CutAccuracy::ScoringProfile&profile){return CutAccuracy::usesNativeFixedCarrier(kind,profile)?CutAccuracy::beatSaberFixedCarrier(profile.maxScore):CutAccuracy::beatSaberMeasurementCarrier(profile.maxScore);}
+CutAccuracy::BeatSaberCarrierDefinition CarrierForBuffer(CutScoreBuffer*b){if(!b)return CutAccuracy::beatSaberMeasurementCarrier(100);auto it=bufferCarriers.find(b);if(it!=bufferCarriers.end())return it->second;return CarrierForDefinition(b->_noteScoreDefinition);}
+double CenterQuality(CutScoreBuffer*b){auto c=CarrierForBuffer(b);return b&&c.centerDistanceMax>0?std::clamp(static_cast<double>(b->_centerDistanceCutScore)/static_cast<double>(c.centerDistanceMax),0.0,1.0):0.0;}
+void ApplyScoreParts(CutScoreBuffer*b,const CutAccuracy::BeatSaberCutScoreParts&p){if(!b)return;b->_centerDistanceCutScore=p.centerDistance;b->_beforeCutScore=p.before;b->_afterCutScore=p.after;}
+void ApplyPendingScoreOverride(ScoringElement*e){if(!e)return;auto it=pendingScoreOverrides.find(e);if(it==pendingScoreOverrides.end())return;if(auto good=il2cpp_utils::try_cast<GoodCutScoringElement>(e))ApplyScoreParts(good.value()->_cutScoreBuffer,it->second);}
+void SyncBuiltinScoreOverride(){if(!RuntimeCustomScoringActive()||!scoreControllerWithDelegate)return;int max=CutAccuracy::customInternalMaxScore(sessionStats.levelMax());int score=CutAccuracy::customInternalScoreFromCustomLevel(sessionStats.levelEarned(),sessionStats.levelMax());float modifier=scoreControllerWithDelegate->_prevMultiplierFromModifiers;int modified=ScoreModel::GetModifiedScoreForGameplayModifiersScoreMultiplier(score,modifier);int modifiedMax=ScoreModel::GetModifiedScoreForGameplayModifiersScoreMultiplier(max,modifier);scoreControllerWithDelegate->_multipliedScore=score;scoreControllerWithDelegate->_immediateMaxPossibleMultipliedScore=max;scoreControllerWithDelegate->_modifiedScore=modified;scoreControllerWithDelegate->_immediateMaxPossibleModifiedScore=modifiedMax;if(scoreControllerWithDelegate->scoreDidChangeEvent)scoreControllerWithDelegate->scoreDidChangeEvent->Invoke(score,modified);lastBuiltinScoreOverride=score;lastBuiltinMaxScoreObserved=max;++builtinScoreOverridesApplied;}
+void CommitFailure(ScoringElement*element,bool badCut){if(!element||!element->noteData)return;auto*n=element->noteData;auto k=KindForNote(n);if(k==CutAccuracy::ProfileKind::Excluded){++objectsIgnored;pendingCuts.erase(n);return;}auto p=CurrentProfile(k);double score=CutAccuracy::failureScore(badCut?p.badCut:p.miss,p.maxScore);sessionStats.forSide(ExpectedSide(n)).addFixed(score,p.maxScore,ActualMultiplier(element),MaxMultiplier(element));pendingCuts.erase(n);SyncBuiltinScoreOverride();}
+void CommitGood(GoodCutScoringElement*good){if(!good||!good->noteData)return;auto*n=good->noteData;auto k=KindForNote(n);if(k==CutAccuracy::ProfileKind::Excluded){++objectsIgnored;pendingCuts.erase(n);return;}auto profile=CurrentProfile(k);auto*b=good->_cutScoreBuffer;CutAccuracy::ScoringInput input{};auto it=pendingCuts.find(n);CutAccuracy::SaberSide side=ExpectedSide(n);if(it!=pendingCuts.end()){side=it->second.side;input.mini=FourQuality(it->second);input.preciseAvailable=true;pendingCuts.erase(it);} // Read native center accuracy BEFORE replacing native buckets.
+ if(b)input.centerQuality=CenterQuality(b);auto*counter=b?b->_saberSwingRatingCounter:nullptr;auto*movement=counter?(SaberMovementData*)counter->_saberMovementData:nullptr;if(movement&&preSwingDegrees.contains(movement))input.beforeSwingDeg=preSwingDegrees[movement];else if(b&&counter)input.beforeSwingDeg=std::clamp(static_cast<double>(b->get_beforeCutSwingRating()),0.0,1.0)*kNativeBeforeFullDeg;if(counter&&postSwingDegrees.contains(counter))input.afterSwingDeg=postSwingDegrees[counter];else if(b&&counter)input.afterSwingDeg=std::clamp(static_cast<double>(b->get_afterCutSwingRating()),0.0,1.0)*kNativeAfterFullDeg;auto scored=CutAccuracy::scoreValidCut(input,profile);const bool nativeFixedCarrier=CutAccuracy::usesNativeFixedCarrier(k,profile);if(!nativeFixedCarrier){auto parts=CutAccuracy::beatSaberCutScoreParts(scored,CarrierForBuffer(b));pendingScoreOverrides[good]=parts;ApplyScoreParts(b,parts);}sessionStats.forSide(side).addScored(scored,ActualMultiplier(good),MaxMultiplier(good));SyncBuiltinScoreOverride();if(ShouldShowFlyingScore())PresentCustomFlyingScore(b,scored);if(k==CutAccuracy::ProfileKind::ChainLink||k==CutAccuracy::ProfileKind::ChainLinkArcHead)++chainLinksScored;CutAccuracyLogger.info("{} {:.1f}/{:.1f} | precise {:.1f}% (upper {:.1f}% lower {:.1f}%) center {:.1f}% before {:.1f}% after {:.1f}%",std::string(CutAccuracy::profileKindName(k)),scored.totalScore,scored.maxScore,scored.preciseQuality*100.0,scored.upperPairQuality*100.0,scored.lowerPairQuality*100.0,scored.centerQuality*100.0,scored.beforeQuality*100.0,scored.afterQuality*100.0);if(movement)preSwingDegrees.erase(movement);if(counter)postSwingDegrees.erase(counter);}
+void OnScoringFinished(ScoringElement*e){if(!RuntimeCustomScoringActive()||!e||!e->noteData)return;if(auto good=il2cpp_utils::try_cast<GoodCutScoringElement>(e))CommitGood(good.value());else if(il2cpp_utils::try_cast<BadCutScoringElement>(e))CommitFailure(e,true);else if(il2cpp_utils::try_cast<MissScoringElement>(e))CommitFailure(e,false);}
+template<typename Hook> bool TryInstallHook(){try{auto*info=Hook::getInfo();if(!info||!info->methodPointer){CutAccuracyLogger.warn("Skipping hook {}: method not found",Hook::name());return false;}Hooking::__InstallHook<Hook>(CutAccuracyLogger,reinterpret_cast<void*>(info->methodPointer));return true;}catch(...){CutAccuracyLogger.warn("Skipping hook {}",Hook::name());return false;}}
 }
-
-void OnScoringFinished(ScoringElement* element) {
-    if (!element || !element->noteData) return;
-    if (auto good = il2cpp_utils::try_cast<GoodCutScoringElement>(element)) {
-        CommitGood(good.value());
-    } else if (il2cpp_utils::try_cast<BadCutScoringElement>(element)) {
-        CommitMiss(element->noteData, MaxMultiplier(element));
-    } else if (il2cpp_utils::try_cast<MissScoringElement>(element)) {
-        CommitMiss(element->noteData, MaxMultiplier(element));
-    }
-}
-
-template<typename Hook>
-bool TryInstallHook() {
-    try {
-        auto* info = Hook::getInfo();
-        if (!info || !info->methodPointer) {
-            CutAccuracyLogger.warn("Skipping hook {}: method not found", Hook::name());
-            return false;
-        }
-
-        Hooking::__InstallHook<Hook>(CutAccuracyLogger, reinterpret_cast<void*>(info->methodPointer));
-        return true;
-    } catch (const std::exception& e) {
-        CutAccuracyLogger.error("Skipping hook {}: {}", Hook::name(), e.what());
-        return false;
-    } catch (...) {
-        CutAccuracyLogger.error("Skipping hook {}: unknown hook resolution failure", Hook::name());
-        return false;
-    }
-}
-
-} // namespace
-
-
-MAKE_HOOK_MATCH(CA_GetNoteScoreDefinition,
-    &ScoreModel::GetNoteScoreDefinition,
-    ScoreModel_NoteScoreDefinition*, NoteData_ScoringType scoringType) {
-
-    auto* def = CA_GetNoteScoreDefinition(scoringType);
-    const auto rule = CutAccuracy::scoreObjectRuleForScoringType(static_cast<int>(scoringType));
-    PatchScoreDefinition(def, rule);
-    return def;
-}
-
-MAKE_HOOK_MATCH(CA_NoteWasCut,
-    &BeatmapObjectManager::HandleNoteControllerNoteWasCut,
-    void, BeatmapObjectManager* self, NoteController* noteController,
-    ByRef<NoteCutInfo> noteCutInfo) {
-
-    if (noteController && UsesCubeModel(noteController->noteData)) {
-        auto noteTransform = noteController->get_noteTransform();
-        auto* t = noteTransform.ptr();
-        if (t) {
-            const auto localPlane = WorldPlaneToLocal(t, noteCutInfo.heldRef.cutPoint, noteCutInfo.heldRef.cutNormal);
-            const auto coreDirection = ToCoreCutDirection(noteController->noteData->cutDirection);
-            const auto splitAxis = ResolveSplitAxisLocal(noteController->noteData, t, noteCutInfo.heldRef);
-
-            if (CutAccuracy::lengthSq(splitAxis) > 1e-8) {
-                const auto first = CutAccuracy::cutDepthSplitMiniNoteVolumes(splitAxis, true, localPlane);
-                const auto second = CutAccuracy::cutDepthSplitMiniNoteVolumes(splitAxis, false, localPlane);
-
-                pendingCuts[noteController->noteData] = {
-                    ExpectedSide(noteController->noteData),
-                    coreDirection,
-                    ToDepthSplitRatios(first),
-                    ToDepthSplitRatios(second)
-                };
-            } else {
-                CutAccuracyLogger.warn("No usable split axis for note; completed scoring will count it as zero");
-            }
-        }
-    }
-
-    CA_NoteWasCut(self, noteController, noteCutInfo);
-}
-
-MAKE_HOOK_MATCH(CA_ComputeSwingRating,
-    static_cast<float (SaberMovementData::*)(bool, float)>(&SaberMovementData::ComputeSwingRating),
-    float, SaberMovementData* self, bool overrideSegmentAngle, float overrideValue) {
-
-    const float vanilla = CA_ComputeSwingRating(self, overrideSegmentAngle, overrideValue);
-    if (!self || self->_validCount <= 0 || self->_data.size() == 0) return vanilla;
-    const double fullSwingDegrees = CurrentScoreWeights().beforeSwingFullAngleDeg;
-
-    const auto data = self->_data;
-    const int length = data.size();
-    int index = self->_nextAddIndex - 1;
-    if (index < 0) index += length;
-
-    const float startTime = data[index].time;
-    float time = startTime;
-    UnityEngine::Vector3 previousNormal = data[index].segmentNormal;
-    double degrees = overrideSegmentAngle ? overrideValue : data[index].segmentAngle;
-
-    for (int i = 2; startTime - time < 0.4f && i < self->_validCount && degrees < fullSwingDegrees; ++i) {
-        --index;
-        if (index < 0) index += length;
-        const auto& e = data[index];
-        const float normalDiff = UnityEngine::Vector3::Angle(e.segmentNormal, previousNormal);
-        if (normalDiff > 90.0f) break;
-        degrees += e.segmentAngle;
-        previousNormal = e.segmentNormal;
-        time = e.time;
-    }
-
-    preSwingDegrees[self] = std::min(fullSwingDegrees, degrees);
-    return vanilla;
-}
-
-MAKE_HOOK_MATCH(CA_ProcessNewSwingData,
-    &SaberSwingRatingCounter::ProcessNewData,
-    void, SaberSwingRatingCounter* self,
-    BladeMovementDataElement newData,
-    BladeMovementDataElement prevData,
-    bool prevDataAreValid) {
-
-    const bool wasPastPlane = self->_notePlaneWasCut;
-    CA_ProcessNewSwingData(self, newData, prevData, prevDataAreValid);
-
-    double& degrees = postSwingDegrees[self];
-    const double fullSwingDegrees = CurrentScoreWeights().afterSwingFullAngleDeg;
-    if (degrees >= fullSwingDegrees || !prevDataAreValid) return;
-
-    if (!wasPastPlane && self->_notePlaneWasCut) {
-        const float partial = UnityEngine::Vector3::Angle(
-            Subtract(self->_cutTopPos, self->_cutBottomPos),
-            Subtract(self->_afterCutTopPos, self->_afterCutBottomPos));
-        degrees = std::min(fullSwingDegrees, degrees + static_cast<double>(partial));
-        return;
-    }
-
-    if (self->_notePlaneWasCut && self->_rateAfterCut) {
-        const float normalDiff = UnityEngine::Vector3::Angle(newData.segmentNormal, self->_cutPlaneNormal);
-        if (normalDiff <= 90.0f) {
-            degrees = std::min(fullSwingDegrees, degrees + static_cast<double>(newData.segmentAngle));
-        }
-    }
-}
-
-MAKE_HOOK_MATCH(CA_ScoreControllerStart, &ScoreController::Start, void, ScoreController* self) {
-    ClearHud();
-    ClearFlyingScores();
-    pendingScoreOverrides.clear();
-    ResetSession();
-    CutAccuracyLogger.info(
-        "CutAccuracy session scoring blend: swing {}% / note accuracy {}%",
-        100 - CurrentAccuracyWeightPercent(), CurrentAccuracyWeightPercent());
+MAKE_HOOK_MATCH(CA_GetNoteScoreDefinition,&ScoreModel::GetNoteScoreDefinition,ScoreModel_NoteScoreDefinition*,NoteData_ScoringType scoringType){auto*def=CA_GetNoteScoreDefinition(scoringType);PatchScoreDefinition(def,static_cast<int>(scoringType));return def;}
+MAKE_HOOK_MATCH(CA_CutScoreBufferInit,&CutScoreBuffer::Init,bool,CutScoreBuffer*self,ByRef<NoteCutInfo>noteCutInfo){auto ok=CA_CutScoreBufferInit(self,noteCutInfo);if(RuntimeCustomScoringActive()&&self&&noteCutInfo.heldRef.noteData){auto d=ToCoreCutDirection(noteCutInfo.heldRef.noteData->cutDirection);auto kind=CutAccuracy::profileKindForScoringType(static_cast<int>(noteCutInfo.heldRef.noteData->scoringType),d==CutAccuracy::CutDirection::Any);PatchScoreDefinition(self->_noteScoreDefinition,static_cast<int>(noteCutInfo.heldRef.noteData->scoringType),d==CutAccuracy::CutDirection::Any);if(kind!=CutAccuracy::ProfileKind::Excluded)bufferCarriers[self]=CarrierForProfile(kind,CurrentProfile(kind));else bufferCarriers.erase(self);}return ok;}
+MAKE_HOOK_MATCH(CA_NoteWasCut,&BeatmapObjectManager::HandleNoteControllerNoteWasCut,void,BeatmapObjectManager*self,NoteController*noteController,ByRef<NoteCutInfo>noteCutInfo){if(noteController&&IsTracked(noteController->noteData)){auto kind=KindForNote(noteController->noteData);auto profile=CurrentProfile(kind);if(profile.precise.enabled){auto nt=noteController->get_noteTransform();auto*t=nt.ptr();if(t){auto plane=WorldPlaneToLocal(t,noteCutInfo.heldRef.cutPoint,noteCutInfo.heldRef.cutNormal);auto d=ToCoreCutDirection(noteController->noteData->cutDirection);auto axis=ResolveSplitAxisLocal(noteController->noteData,t,noteCutInfo.heldRef);if(CutAccuracy::lengthSq(axis)>1e-8){auto upper=CutAccuracy::cutDepthSplitMiniNoteVolumes(axis,true,plane);auto lower=CutAccuracy::cutDepthSplitMiniNoteVolumes(axis,false,plane);pendingCuts[noteController->noteData]={ExpectedSide(noteController->noteData),d,Ratios(upper),Ratios(lower)};}}}}CA_NoteWasCut(self,noteController,noteCutInfo);}
+MAKE_HOOK_MATCH(CA_ComputeSwingRating,static_cast<float(SaberMovementData::*)(bool,float)>(&SaberMovementData::ComputeSwingRating),float,SaberMovementData*self,bool overrideSegmentAngle,float overrideValue){float vanilla=CA_ComputeSwingRating(self,overrideSegmentAngle,overrideValue);if(!RuntimeCustomScoringActive()||!self||self->_validCount<=0||self->_data.size()==0)return vanilla;auto data=self->_data;int len=data.size(),index=self->_nextAddIndex-1;if(index<0)index+=len;float start=data[index].time,time=start;auto prev=data[index].segmentNormal;double degrees=overrideSegmentAngle?overrideValue:data[index].segmentAngle;for(int i=2;start-time<0.4f&&i<self->_validCount&&degrees<kSwingCaptureCapDeg;++i){--index;if(index<0)index+=len;auto&e=data[index];if(UnityEngine::Vector3::Angle(e.segmentNormal,prev)>90)break;degrees+=e.segmentAngle;prev=e.segmentNormal;time=e.time;}preSwingDegrees[self]=std::min(kSwingCaptureCapDeg,degrees);return vanilla;}
+MAKE_HOOK_MATCH(CA_ProcessNewSwingData,&SaberSwingRatingCounter::ProcessNewData,void,SaberSwingRatingCounter*self,BladeMovementDataElement newData,BladeMovementDataElement prevData,bool prevValid){bool was=self->_notePlaneWasCut;CA_ProcessNewSwingData(self,newData,prevData,prevValid);if(!RuntimeCustomScoringActive()||!self)return;double&deg=postSwingDegrees[self];if(deg>=kSwingCaptureCapDeg||!prevValid)return;if(!was&&self->_notePlaneWasCut){float partial=UnityEngine::Vector3::Angle(Subtract(self->_cutTopPos,self->_cutBottomPos),Subtract(self->_afterCutTopPos,self->_afterCutBottomPos));deg=std::min(kSwingCaptureCapDeg,deg+static_cast<double>(partial));return;}if(self->_notePlaneWasCut&&self->_rateAfterCut){float nd=UnityEngine::Vector3::Angle(newData.segmentNormal,self->_cutPlaneNormal);if(nd<=90)deg=std::min(kSwingCaptureCapDeg,deg+static_cast<double>(newData.segmentAngle));}}
+MAKE_HOOK_MATCH(CA_ScoreControllerLateUpdate,&ScoreController::LateUpdate,void,ScoreController*self){CA_ScoreControllerLateUpdate(self);if(self==scoreControllerWithDelegate)SyncBuiltinScoreOverride();}
+MAKE_HOOK_MATCH(CA_ScoreControllerStart,&ScoreController::Start,void,ScoreController*self){
+    ClearFlyingScores();pendingScoreOverrides.clear();bufferCarriers.clear();ResetSession();
     CA_ScoreControllerStart(self);
-
-    // Defensive lifecycle handling: ScoreController normally starts once per play
-    // scene. Avoid touching stale controller objects from a previous scene; Unity
-    // can already be tearing them down when Continue starts the next level.
-    if (scoreControllerWithDelegate && scoreControllerWithDelegate != self) {
-        scoreControllerWithDelegate = nullptr;
-        scoreFinishedDelegate = nullptr;
-    } else if (scoreControllerWithDelegate && scoreFinishedDelegate) {
-        scoreControllerWithDelegate->remove_scoringForNoteFinishedEvent(scoreFinishedDelegate);
+    if(scoreControllerWithDelegate&&scoreControllerWithDelegate!=self){scoreControllerWithDelegate=nullptr;scoreFinishedDelegate=nullptr;}
+    else if(scoreControllerWithDelegate&&scoreFinishedDelegate)scoreControllerWithDelegate->remove_scoringForNoteFinishedEvent(scoreFinishedDelegate);
+    if(!CustomScoringActive())return;
+    if(!runtimeScoringReady){
+        CutAccuracyLogger.error("CutAccuracy custom mode requested, but required scoring hooks are unavailable; leaving Beat Saber scoring untouched");
+        return;
     }
-
-    scoreFinishedDelegate = custom_types::MakeDelegate<System::Action_1<ScoringElement*>*>(
-        (std::function<void(ScoringElement*)>)OnScoringFinished);
-    scoreControllerWithDelegate = self;
-    if (self && scoreFinishedDelegate) {
-        self->add_scoringForNoteFinishedEvent(scoreFinishedDelegate);
-    }
+    scoreFinishedDelegate=custom_types::MakeDelegate<System::Action_1<ScoringElement*>*>((std::function<void(ScoringElement*)>)OnScoringFinished);
+    scoreControllerWithDelegate=self;
+    if(self&&scoreFinishedDelegate)self->add_scoringForNoteFinishedEvent(scoreFinishedDelegate);
+    CutAccuracyLogger.info("CutAccuracy custom scoring active in mode {}; external score submission disabled while custom mode is selected",static_cast<int>(CurrentScoringMode()));
 }
+MAKE_HOOK_MATCH(CA_ScoreControllerOnDestroy,&ScoreController::OnDestroy,void,ScoreController*self){ClearFlyingScores();pendingScoreOverrides.clear();bufferCarriers.clear();if(self&&scoreFinishedDelegate&&self==scoreControllerWithDelegate){self->remove_scoringForNoteFinishedEvent(scoreFinishedDelegate);scoreFinishedDelegate=nullptr;scoreControllerWithDelegate=nullptr;}CA_ScoreControllerOnDestroy(self);}
+MAKE_HOOK_MATCH(CA_ScoreControllerDespawnScoringElement,&ScoreController::DespawnScoringElement,void,ScoreController*self,ScoringElement*e){CutScoreBuffer*b=nullptr;if(e){auto good=il2cpp_utils::try_cast<GoodCutScoringElement>(e);if(good)b=good.value()->_cutScoreBuffer;}if(RuntimeCustomScoringActive())ApplyPendingScoreOverride(e);CA_ScoreControllerDespawnScoringElement(self,e);if(e)pendingScoreOverrides.erase(e);if(b)bufferCarriers.erase(b);}
+MAKE_HOOK_MATCH(CA_FlyingScoreInitAndPresent,&FlyingScoreEffect::InitAndPresent,void,FlyingScoreEffect*self,IReadonlyCutScoreBuffer*b,float duration,UnityEngine::Vector3 pos,UnityEngine::Color color){CA_FlyingScoreInitAndPresent(self,b,duration,pos,color);if(RuntimeCustomScoringActive()&&ShouldShowFlyingScore())RegisterFlyingScore(b,self);}
+MAKE_HOOK_CHECKED_FIND(CA_FlyingScoreDidFinish,&FlyingScoreEffect::HandleCutScoreBufferDidFinish,classof(FlyingScoreEffect*),"HandleCutScoreBufferDidFinish",void,FlyingScoreEffect*self,CutScoreBuffer*b){CA_FlyingScoreDidFinish(self,b);if(RuntimeCustomScoringActive()&&ShouldShowFlyingScore()&&b)ReapplyCustomFlyingScore(b->i___GlobalNamespace__IReadonlyCutScoreBuffer());}
+MAKE_HOOK_MATCH(CA_FlyingScoreRefreshScore,&FlyingScoreEffect::RefreshScore,void,FlyingScoreEffect*self,int score,int maxPossibleCutScore){CA_FlyingScoreRefreshScore(self,score,maxPossibleCutScore);if(RuntimeCustomScoringActive()&&ShouldShowFlyingScore())ReapplyCustomFlyingScore(self);}
+MAKE_HOOK_FIND_INSTANCE(CA_FlyingScoreUpdate,classof(FlyingScoreEffect*),"Update",void,FlyingScoreEffect*self){CA_FlyingScoreUpdate(self);if(RuntimeCustomScoringActive()&&ShouldShowFlyingScore())ReapplyCustomFlyingScore(self);}
+bool RuntimeScoringReady(){return runtimeScoringReady;}
 
-MAKE_HOOK_MATCH(CA_ScoreControllerOnDestroy, &ScoreController::OnDestroy, void, ScoreController* self) {
-    ClearHud();
-    ClearFlyingScores();
-    pendingScoreOverrides.clear();
-    if (self && scoreFinishedDelegate && self == scoreControllerWithDelegate) {
-        self->remove_scoringForNoteFinishedEvent(scoreFinishedDelegate);
-        scoreFinishedDelegate = nullptr;
-        scoreControllerWithDelegate = nullptr;
-    }
-    CA_ScoreControllerOnDestroy(self);
-}
-
-MAKE_HOOK_MATCH(CA_ScoreControllerDespawnScoringElement,
-    &ScoreController::DespawnScoringElement,
-    void, ScoreController* self, ScoringElement* scoringElement) {
-
-    ApplyPendingScoreOverride(scoringElement);
-    CA_ScoreControllerDespawnScoringElement(self, scoringElement);
-    if (scoringElement) pendingScoreOverrides.erase(scoringElement);
-}
-
-
-MAKE_HOOK_MATCH(CA_ComboUIControllerStart, &ComboUIController::Start, void, ComboUIController* self) {
-    CA_ComboUIControllerStart(self);
-    try {
-        ClearHud();
-        if (ShouldUseQountersHud()) {
-            CutAccuracyLogger.info("CutAccuracy standalone HUD skipped because Qounters++ is enabled");
-            return;
-        }
-        InstallHud(self);
-    } catch (const std::exception& e) {
-        CutAccuracyLogger.warn("CutAccuracy HUD install failed: {}", e.what());
-        ClearHud();
-    } catch (...) {
-        CutAccuracyLogger.warn("CutAccuracy HUD install failed with an unknown exception");
-        ClearHud();
+void UpdateScoreSubmissionPolicy(){
+    try{
+        MetaCore::Game::SetScoreSubmission(MOD_ID,CutAccuracy::scoreSubmissionAllowedForMode(CurrentScoringMode()));
+    }catch(const std::exception& e){
+        CutAccuracyLogger.error("CutAccuracy could not update score-submission policy: {}",e.what());
+    }catch(...){
+        CutAccuracyLogger.error("CutAccuracy could not update score-submission policy");
     }
 }
 
-MAKE_HOOK_MATCH(CA_FlyingScoreInitAndPresent,
-    &FlyingScoreEffect::InitAndPresent,
-    void, FlyingScoreEffect* self, IReadonlyCutScoreBuffer* cutScoreBuffer,
-    float duration, UnityEngine::Vector3 targetPos, UnityEngine::Color color) {
-
-    CA_FlyingScoreInitAndPresent(self, cutScoreBuffer, duration, targetPos, color);
-    RegisterFlyingScore(cutScoreBuffer, self);
+void InstallHooks(){
+    int n=0;
+    const bool scoreDefinition=TryInstallHook<Hook_CA_GetNoteScoreDefinition>(); n+=scoreDefinition;
+    const bool scoreBufferInit=TryInstallHook<Hook_CA_CutScoreBufferInit>(); n+=scoreBufferInit;
+    const bool preciseGeometry=TryInstallHook<Hook_CA_NoteWasCut>(); n+=preciseGeometry;
+    const bool beforeSwing=TryInstallHook<Hook_CA_ComputeSwingRating>(); n+=beforeSwing;
+    const bool afterSwing=TryInstallHook<Hook_CA_ProcessNewSwingData>(); n+=afterSwing;
+    const bool scoreLifecycle=TryInstallHook<Hook_CA_ScoreControllerStart>(); n+=scoreLifecycle;
+    const bool scoreCleanup=TryInstallHook<Hook_CA_ScoreControllerOnDestroy>(); n+=scoreCleanup;
+    const bool scoreDespawn=TryInstallHook<Hook_CA_ScoreControllerDespawnScoringElement>(); n+=scoreDespawn;
+    const bool scoreLateUpdate=TryInstallHook<Hook_CA_ScoreControllerLateUpdate>(); n+=scoreLateUpdate;
+    n+=TryInstallHook<Hook_CA_FlyingScoreInitAndPresent>();
+    n+=TryInstallHook<Hook_CA_FlyingScoreDidFinish>();
+    n+=TryInstallHook<Hook_CA_FlyingScoreRefreshScore>();
+    n+=TryInstallHook<Hook_CA_FlyingScoreUpdate>();
+    runtimeScoringReady=scoreDefinition&&scoreBufferInit&&preciseGeometry&&beforeSwing&&afterSwing&&scoreLifecycle&&scoreCleanup&&scoreDespawn&&scoreLateUpdate;
+    CutAccuracyLogger.info("CutAccuracy installed {}/13 hooks; core scoring hooks {}",n,runtimeScoringReady?"ready":"INCOMPLETE");
+    if(!runtimeScoringReady)CutAccuracyLogger.error("CutAccuracy fail-safe engaged: custom scoring will not run because one or more required hooks are unavailable");
+    UpdateScoreSubmissionPolicy();
 }
-
-MAKE_HOOK_CHECKED_FIND(CA_FlyingScoreDidFinish,
-    &FlyingScoreEffect::HandleCutScoreBufferDidFinish,
-    classof(FlyingScoreEffect*),
-    "HandleCutScoreBufferDidFinish",
-    void, FlyingScoreEffect* self, CutScoreBuffer* cutScoreBuffer) {
-
-    CA_FlyingScoreDidFinish(self, cutScoreBuffer);
-    if (cutScoreBuffer) {
-        ReapplyCustomFlyingScore(cutScoreBuffer->i___GlobalNamespace__IReadonlyCutScoreBuffer());
-    }
 }
-
-MAKE_HOOK_MATCH(CA_FlyingScoreRefreshScore,
-    &FlyingScoreEffect::RefreshScore,
-    void, FlyingScoreEffect* self, int score, int maxPossibleCutScore) {
-
-    CA_FlyingScoreRefreshScore(self, score, maxPossibleCutScore);
-    ReapplyCustomFlyingScore(self);
-}
-
-MAKE_HOOK_FIND_INSTANCE(CA_FlyingScoreUpdate,
-    classof(FlyingScoreEffect*),
-    "Update",
-    void, FlyingScoreEffect* self) {
-
-    CA_FlyingScoreUpdate(self);
-    ReapplyCustomFlyingScore(self);
-}
-
-void InstallHooks() {
-    int installed = 0;
-    installed += TryInstallHook<Hook_CA_GetNoteScoreDefinition>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_NoteWasCut>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_ComputeSwingRating>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_ProcessNewSwingData>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_ScoreControllerStart>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_ScoreControllerOnDestroy>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_ScoreControllerDespawnScoringElement>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_ComboUIControllerStart>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_FlyingScoreInitAndPresent>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_FlyingScoreDidFinish>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_FlyingScoreRefreshScore>() ? 1 : 0;
-    installed += TryInstallHook<Hook_CA_FlyingScoreUpdate>() ? 1 : 0;
-
-    CutAccuracyLogger.info("CutAccuracy installed {}/12 hooks", installed);
-}
-
-} // namespace CutAccuracyQuest

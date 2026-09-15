@@ -3,11 +3,11 @@
   "id": "${mod_id}",
   "name": "Cut Accuracy",
   "version": "${version}",
-  "author": "Prototype",
+  "author": "Daniel Rosengarten",
   "modloader": "Scotland2",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.40.8_7379",
-  "description": "Adjustable /100 swing-angle and four-mini-note accuracy scoring.",
+  "description": "Configurable Beat Saber scoring with Simple and per-note Advanced profiles, four-mini-note precise accuracy, center accuracy, and swing weighting.",
   "modFiles": [],
   "lateModFiles": ["${binary}"],
   "libraryFiles": []

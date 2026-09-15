@@ -1,13 +1,13 @@
 {
   "$schema": "https://raw.githubusercontent.com/QuestPackageManager/QPM.Package/refs/heads/main/qpm.shared.schema.json",
   "config": {
-    "version": "0.12.2",
+    "version": "0.14.17",
     "sharedDir": "shared",
     "dependenciesDir": "extern",
     "info": {
       "name": "CutAccuracy",
       "id": "cutaccuracy",
-      "version": "0.12.2",
+      "version": "0.14.17",
       "url": null,
       "additionalData": {
         "overrideSoName": "libcutaccuracy.so"
@@ -65,8 +65,8 @@
         }
       },
       {
-        "id": "qounters++",
-        "versionRange": "^1.1.5",
+        "id": "metacore",
+        "versionRange": "^1.6.3",
         "additionalData": {}
       }
     ]
