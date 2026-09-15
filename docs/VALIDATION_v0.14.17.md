@@ -1,26 +1,27 @@
-# Cut Accuracy 0.14.17 verification
+# Squore Customiser 0.14.17 verification
 
 ## Package identity
 
-- Mod name: Cut Accuracy
+- Mod name: Squore Customiser
 - Mod ID: `cutaccuracy`
 - Author: Daniel Rosengarten
 - Version: `0.14.17`
 - Game target: Beat Saber `1.40.8_7379`
 - Modloader: Scotland2
-- QMOD: `CutAccuracy-0.14.17.qmod`
-- `libcutaccuracy.so` SHA-256: `16ae6c604d490d94b729cec5035ec75b7d6a5963c79797212da41fb10645cdd4`
-- `CutAccuracy-0.14.17.qmod` SHA-256: `b1b60dac722f68e3b793f6aa9e951275642a6e5ed9f68bf6d8fb7b808886bc17`
+- QMOD: `SquoreCustomiser-0.14.17.qmod`
+- `libcutaccuracy.so` SHA-256: `5664f169dbc943fe2af94e9b1bfde14ef21b46576058c5cdd35022c30e2d5d7f`
+- `SquoreCustomiser-0.14.17.qmod` SHA-256: `14668ba1fdb00ac7aeec52e1d31df2d4b9e0c53b4fb7b6e9316687fef41424ac`
+- `cover.png` SHA-256: `0d8555d577087cbda0a52d37a7f1d7f652216077809444a2127f42aadb49e4d4`
 
 ## Leaderboard submission policy
 
 Verified against `extern/includes/metacore/shared/game.hpp`: `MetaCore::Game::SetScoreSubmission(mod, enable)` enables submission for this mod only, and global submission remains disabled if any mod keeps a disabler registered.
 
-Cut Accuracy uses one tested rule:
+Squore Customiser uses one tested rule:
 
-- Off / vanilla mode: `scoreSubmissionAllowedForMode(ScoringMode::Off) == true`, so Cut Accuracy releases its MetaCore submission block.
-- Simple mode: `scoreSubmissionAllowedForMode(ScoringMode::Simple) == false`, so Cut Accuracy blocks external score submission.
-- Advanced mode: `scoreSubmissionAllowedForMode(ScoringMode::Advanced) == false`, so Cut Accuracy blocks external score submission.
+- Off / vanilla mode: `scoreSubmissionAllowedForMode(ScoringMode::Off) == true`, so Squore Customiser releases its MetaCore submission block.
+- Simple mode: `scoreSubmissionAllowedForMode(ScoringMode::Simple) == false`, so Squore Customiser blocks external score submission.
+- Advanced mode: `scoreSubmissionAllowedForMode(ScoringMode::Advanced) == false`, so Squore Customiser blocks external score submission.
 
 `UpdateScoreSubmissionPolicy()` applies that rule through `MetaCore::Game::SetScoreSubmission(MOD_ID, CutAccuracy::scoreSubmissionAllowedForMode(CurrentScoringMode()))`. The in-game mode selector calls this immediately when the player changes modes, and hook installation calls it at load time.
 
@@ -45,17 +46,18 @@ BeatLeader was present on the test headset. I did not find a ScoreSaber loader l
 
 ## MBF fresh install check
 
-Before the fresh-install check, the previous Cut Accuracy package folder and active loader copy were removed from the headset:
+Before the fresh-install check, the previous Squore Customiser package folder and active loader copy were removed from the headset:
 
 - `/sdcard/ModData/com.beatgames.beatsaber/Packages/1.40.8_7379/cutaccuracy_v0.14.17`
 - `/sdcard/ModData/com.beatgames.beatsaber/Modloader/mods/libcutaccuracy.so`
 
-Then `CutAccuracy-0.14.17.qmod` was pushed to `/data/local/tmp/mbf/uploads/CutAccuracy-0.14.17.qmod` and imported through `mbf-agent`.
+Then `SquoreCustomiser-0.14.17.qmod` was pushed to `/data/local/tmp/mbf/uploads/SquoreCustomiser-0.14.17.qmod` and imported through `mbf-agent`.
 
 The final import log includes:
 
 - `Early load of new mod, ID cutaccuracy, version: 0.14.17, author: Daniel Rosengarten`
 - `Extracting cutaccuracy v0.14.17`
+- MBF imported the mod as `cutaccuracy` with display name `Squore Customiser`.
 - `Extract path: "/sdcard/ModData/com.beatgames.beatsaber/Packages/1.40.8_7379/cutaccuracy_v0.14.17"`
 
 The final enable log includes:
@@ -71,12 +73,14 @@ Installed headset files:
 - Package library: `/sdcard/ModData/com.beatgames.beatsaber/Packages/1.40.8_7379/cutaccuracy_v0.14.17/libcutaccuracy.so`
 - Package manifest: `/sdcard/ModData/com.beatgames.beatsaber/Packages/1.40.8_7379/cutaccuracy_v0.14.17/mod.json`
 
-The headset copies of the active loader library and package library both matched the local library hash above. The headset package manifest reported version `0.14.17` and author `Daniel Rosengarten`.
+The headset copies of the active loader library and package library both matched the local library hash above. The headset package manifest reported display name `Squore Customiser`, ID `cutaccuracy`, version `0.14.17`, author `Daniel Rosengarten`, and `coverImage: cover.png`.
 
 Raw MBF logs are stored in:
 
-- `artifacts/v0.14.17/mbf-fresh-import-final.json`
-- `artifacts/v0.14.17/mbf-fresh-enable-final.json`
+- `artifacts/v0.14.17/mbf-squore-import.json`
+- `artifacts/v0.14.17/mbf-squore-enable.json`
+- `artifacts/v0.14.17/mod-squore-installed.json`
+- `artifacts/v0.14.17/sha256-squore-installed.txt`
 
 ## Runtime limitation
 

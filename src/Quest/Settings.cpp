@@ -491,7 +491,7 @@ void BuildSettingsMenu(HMUI::ViewController*view,bool first,bool,bool){
     auto&cfg=getCutAccuracyConfig();
     auto u=std::make_shared<Ui>();
 
-    auto* title=BSML::Lite::CreateText(c,"Cut Accuracy",TMPro::FontStyles::Bold,3.9f);
+    auto* title=BSML::Lite::CreateText(c,"Squore Customiser",TMPro::FontStyles::Bold,3.6f);
     if(title)ReserveHeight(title->get_gameObject(),5.4f);
 
     Section(c->get_transform(),"Mode","Off uses vanilla Beat Saber scoring. Simple and Advanced use custom scoring and keep external score submission disabled while selected.");
@@ -542,7 +542,7 @@ void BuildSettingsMenu(HMUI::ViewController*view,bool first,bool,bool){
 
     auto* offLayout=Stack(c); u->offPanel=offLayout->get_gameObject();
     auto* offText=BSML::Lite::CreateText(offLayout,"Vanilla Beat Saber scoring is active.",TMPro::FontStyles::Normal,3.2f);
-    if(offText) BSML::Lite::AddHoverHint(offText->get_gameObject(),"Cut Accuracy does not replace note scoring while Off is selected.");
+    if(offText) BSML::Lite::AddHoverHint(offText->get_gameObject(),"Squore Customiser does not replace note scoring while Off is selected.");
 
     auto* simpleLayout=Stack(c); u->simplePanel=simpleLayout->get_gameObject();
     Section(simpleLayout->get_transform(),"Simple","Choose a preset, then adjust the method and weights.");
@@ -666,7 +666,7 @@ int Bucket(double pct){const double c=std::isfinite(pct)?std::clamp(pct,0.0,100.
 }
 
 void InitConfig(const modloader::ModInfo&info){CutAccuracyConfig_t::Init(info);auto&c=getCutAccuracyConfig();c.Mode.SetValue(std::clamp(c.Mode.GetValue(),0,2));auto simple=ReadSimple();WriteSimple(simple);if(!c.SimpleWeightsInitialized.GetValue())c.SimpleWeightsInitialized.SetValue(true);InitializeRuntime();}
-void RegisterSettingsMenu(){try{BSML::Register::RegisterSettingsMenu("Cut Accuracy",BuildSettingsMenu,false);BSML::Register::RegisterMainMenuViewControllerMethod("Cut Accuracy","Cut Accuracy","Build Simple or per-note Advanced scoring profiles",BuildSettingsMenu);}catch(...) {CutAccuracyLogger.warn("CutAccuracy settings registration failed");}}
+void RegisterSettingsMenu(){try{BSML::Register::RegisterSettingsMenu("Squore Customiser",BuildSettingsMenu,false);BSML::Register::RegisterMainMenuViewControllerMethod("Squore Customiser","Squore Customiser","Build Simple or per-note Advanced scoring profiles",BuildSettingsMenu);}catch(...) {CutAccuracyLogger.warn("CutAccuracy settings registration failed");}}
 ScoringMode CurrentScoringMode(){return static_cast<ScoringMode>(std::clamp(getCutAccuracyConfig().Mode.GetValue(),0,2));} AccuracyMethod CurrentSimpleAccuracyMethod(){return ReadSimple().accuracyMethod;} SimpleConfig CurrentSimpleConfig(){return ReadSimple();} const AdvancedConfig& CurrentAdvancedConfig(){return advancedRuntime;} ScoringProfile CurrentProfile(ProfileKind k){if(k==ProfileKind::Excluded)return{};auto m=CurrentScoringMode();if(m==ScoringMode::Advanced)return advancedRuntime.profile(k);return profileFromSimple(ReadSimple(),k);} bool CustomScoringActive(){return customScoringActiveForMode(CurrentScoringMode());} bool ShouldShowFlyingScore(){return getCutAccuracyConfig().ShowFlyingScore.GetValue();}
 bool ShouldShowFlyingScoreText(){return getCutAccuracyConfig().ShowScoreText.GetValue();} std::string FlyingScoreTextForAccuracy(double pct){return ShouldShowFlyingScoreText()?Sanitize(ScoreText(Bucket(pct))):std::string{};}
 }

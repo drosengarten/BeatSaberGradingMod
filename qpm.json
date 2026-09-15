@@ -4,7 +4,7 @@
   "sharedDir": "shared",
   "dependenciesDir": "extern",
   "info": {
-    "name": "CutAccuracy",
+    "name": "SquoreCustomiser",
     "id": "cutaccuracy",
     "version": "0.14.17",
     "url": null,
@@ -20,7 +20,7 @@
       "./extern/libs"
     ],
     "qmodIncludeFiles": [],
-    "qmodOutput": "./CutAccuracy.qmod"
+    "qmodOutput": "./SquoreCustomiser.qmod"
   },
   "dependencies": [
     {

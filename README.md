@@ -1,18 +1,18 @@
-# Cut Accuracy 0.14.17
+# Squore Customiser 0.14.17
 
-Cut Accuracy is a Quest Beat Saber mod for Beat Saber `1.40.8_7379` using the Scotland2 modloader. It lets players choose vanilla scoring, a simple shared custom profile, or advanced per-note-type scoring profiles.
+Squore Customiser is a Quest Beat Saber mod for Beat Saber `1.40.8_7379` using the Scotland2 modloader. It lets players choose vanilla scoring, a simple shared custom profile, or advanced per-note-type scoring profiles.
 
 ## Release package
 
-The release qmod is built as `CutAccuracy-0.14.17.qmod` and declares the mod ID `cutaccuracy`, author `Daniel Rosengarten`, and the package target `com.beatgames.beatsaber` / `1.40.8_7379`.
+The release qmod is built as `SquoreCustomiser-0.14.17.qmod`. It displays as `Squore Customiser`, keeps the existing mod ID `cutaccuracy` for upgrade compatibility, declares author `Daniel Rosengarten`, and targets `com.beatgames.beatsaber` / `1.40.8_7379`.
 
 The qmod includes `libcutaccuracy.so` as a late-loaded mod library and declares MBF-resolvable dependencies for beatsaber-hook, custom-types, paper2_scotland2, BSML, and MetaCore.
 
 ## Player settings
 
-Cut Accuracy has three scoring modes:
+Squore Customiser has three scoring modes:
 
-- **Off** leaves Beat Saber scoring unchanged and releases Cut Accuracy's leaderboard-submission block.
+- **Off** leaves Beat Saber scoring unchanged and releases Squore Customiser's leaderboard-submission block.
 - **Simple** applies one full-note profile and one chain-link maximum. It exposes the main scoring pieces players are most likely to adjust: max score, accuracy method, accuracy/before/after weights, swing angles, and precise upper/lower balance.
 - **Advanced** gives every scoreable Beat Saber note type its own profile. Each profile can set max score, accuracy method, flat score share, center accuracy, swing weighting, precise weighting, bad-cut behavior, and miss behavior.
 
@@ -34,7 +34,7 @@ Precise accuracy still uses four mini-note regions. The cube is split into upper
 
 ## Leaderboard submission safety
 
-When Simple or Advanced custom scoring is active, Cut Accuracy registers a MetaCore score-submission block so compatible leaderboard mods do not submit altered scores. Off mode releases that block and allows vanilla scoring submissions again.
+When Simple or Advanced custom scoring is active, Squore Customiser registers a MetaCore score-submission block so compatible leaderboard mods do not submit altered scores. Off mode releases that block and allows vanilla scoring submissions again.
 
 ## Building
 
@@ -56,12 +56,13 @@ Host-side validation can be run with:
 - Host scoring, geometry, presentation, and submission-policy tests pass.
 - Quest build completes with CMake/QPM.
 - `tools/qpm/qpm qmod zip` creates a valid qmod.
-- MBF fresh import and enable were tested on a headset after removing the previous installed Cut Accuracy package and active loader copy.
+- MBF fresh import and enable were tested on a headset after removing the previous installed Squore Customiser package and active loader copy.
 - The installed headset library and qmod package library matched the local build hash.
 
 Current verified hashes:
 
-- `libcutaccuracy.so`: `16ae6c604d490d94b729cec5035ec75b7d6a5963c79797212da41fb10645cdd4`
-- `CutAccuracy-0.14.17.qmod`: `b1b60dac722f68e3b793f6aa9e951275642a6e5ed9f68bf6d8fb7b808886bc17`
+- `libcutaccuracy.so`: `5664f169dbc943fe2af94e9b1bfde14ef21b46576058c5cdd35022c30e2d5d7f`
+- `SquoreCustomiser-0.14.17.qmod`: `14668ba1fdb00ac7aeec52e1d31df2d4b9e0c53b4fb7b6e9316687fef41424ac`
+- `cover.png`: `0d8555d577087cbda0a52d37a7f1d7f652216077809444a2127f42aadb49e4d4`
 
 Detailed release verification is kept in `docs/VALIDATION_v0.14.17.md`.

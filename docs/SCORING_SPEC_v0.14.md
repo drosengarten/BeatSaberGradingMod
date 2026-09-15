@@ -1,9 +1,9 @@
-# Cut Accuracy v0.14.17 scoring specification
+# Squore Customiser v0.14.17 scoring specification
 
 ## Modes
 
 ### Off
-Cut Accuracy does not alter score definitions, does not attach the custom scoring completion delegate, and does not install its HUD for the play session.
+Squore Customiser does not alter score definitions, does not attach the custom scoring completion delegate, and does not install its HUD for the play session.
 
 ### Simple
 Simple exposes one shared full-note model and one chain-link maximum:
@@ -33,7 +33,7 @@ Each profile independently owns its maximum, Flat weight, enabled components, co
 
 ## Default Advanced: Beat Saber-like rounded profiles
 
-Fresh installs start in **Advanced**. The initial profiles use Beat Saber 1.40.8 scoring-type maxima and map the native point shares to the nearest whole percent. Because enabling Cut Accuracy means custom scoring is active, these are intentionally easy-to-read approximations rather than fractional replicas.
+Fresh installs start in **Advanced**. The initial profiles use Beat Saber 1.40.8 scoring-type maxima and map the native point shares to the nearest whole percent. Because enabling Squore Customiser means custom scoring is active, these are intentionally easy-to-read approximations rather than fractional replicas.
 
 | Profile | Max | Flat | Precise | Center | Before | After |
 |---|---:|---:|---:|---:|---:|---:|
@@ -129,6 +129,6 @@ Advanced component weights — including Flat — are integer percentages only (
 
 ## Score submission safety
 
-When **Simple** or **Advanced** custom scoring is selected, Cut Accuracy registers itself as a MetaCore score-submission disabler. **Off** removes that disabler. This prevents custom maxima (including values above vanilla) from being submitted to third-party leaderboards that honor MetaCore submission state.
+When **Simple** or **Advanced** custom scoring is selected, Squore Customiser registers itself as a MetaCore score-submission disabler. **Off** removes that disabler. This prevents custom maxima (including values above vanilla) from being submitted to third-party leaderboards that honor MetaCore submission state.
 
 If required scoring hooks are unavailable, custom scoring fails closed: Beat Saber scoring is left untouched, while submission remains disabled until the player selects Off.
